@@ -1,0 +1,6 @@
+{
+  "folders": [
+    { "path": "atmega32-fw" },
+    { "path": "esp32-fw" }
+  ]
+}

@@ -1,0 +1,15 @@
+
+##to read all the content from atmega
+~/.platformio/packages/tool-avrdude/bin/avrdude -Pusb -c usbasp -p atmega32 -C ~/.platformio/packages/tool-avrdude/avrdude.conf -U flash:r:chip_contents.hex:i
+
+## initialise, without doing anything 
+
+~/.platformio/packages/tool-avrdude/bin/avrdude -Pusb -B 200 -c usbasp -p atmega32 -C ~/.platformio/packages/tool-avrdude/avrdude.conf -v
+
+
+## upload 
+
+~/.platformio/penv/bin/pio run -t upload
+
+## erase chip_contents
+~/.platformio/packages/tool-avrdude/bin/avrdude -Pusb -B 200 -c usbasp -p atmega32 -C ~/.platformio/packages/tool-avrdude/avrdude.conf -e
