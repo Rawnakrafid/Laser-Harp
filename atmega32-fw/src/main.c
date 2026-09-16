@@ -6,22 +6,29 @@
 /* ------------------------------------------------------------------
  * Laser Harp - ATmega32 beam detection + UART link to ESP32
  *
- * Phase: single beam (beam 0, PA0/ADC0) proven end-to-end before
- * scaling to all 8. Sends a 1-byte state mask to the ESP32 on PD1
- * (TXD) any time a beam's state changes, plus a periodic heartbeat
- * so the ESP32 can tell "all clear" from "link dead".
- *
- * Bit i of the mask = 1 means beam i is currently blocked.
+ * All 7 beams (PA0-PA6 / ADC0-6), one per note (C4..B4). Bit i of the
+ * UART mask = 1 means beam i is currently blocked. Sent on any change,
+ * plus a periodic heartbeat so the ESP32 can tell "all clear" from
+ * "link dead".
  * ------------------------------------------------------------------ */
 
-#define NUM_ACTIVE_BEAMS      1     /* raise to 8 once beam 0 is proven */
-#define CALIBRATION_SAMPLES  50     /* boot-time baseline average, beams assumed clear */
-#define CONFIRM_SAMPLES       5     /* consecutive samples required before flipping state */
-#define TRIGGER_NUM            6    /* trigger below baseline * 6/10 */
-#define TRIGGER_DEN            10
-#define RELEASE_NUM             8   /* release above baseline * 8/10 */
-#define RELEASE_DEN            10
-#define HEARTBEAT_LOOPS       200   /* ~200ms at the 1ms loop delay below */
+#define NUM_BEAMS              7    /* PA0-PA6, one per recorded note */
+#define CALIBRATION_SAMPLES   50    /* boot-time baseline average per beam, beams assumed clear */
+#define CONFIRM_SAMPLES        5    /* consecutive samples required before flipping state */
+#define TRIGGER_NUM             6   /* trigger below baseline * 6/10 */
+#define TRIGGER_DEN             10
+#define RELEASE_NUM              8  /* release above baseline * 8/10 */
+#define RELEASE_DEN             10
+#define HEARTBEAT_LOOPS        200  /* ~200ms at the ~1ms sweep delay below */
+
+typedef struct {
+    uint16_t trigger_thresh;
+    uint16_t release_thresh;
+    uint8_t  blocked;
+    uint8_t  confirm_count;
+} beam_state_t;
+
+static beam_state_t beams[NUM_BEAMS];
 
 static void adc_init(void)
 {
@@ -55,50 +62,56 @@ static void uart_send(uint8_t data)
 
 int main(void)
 {
-    DDRB |= (1 << PB0);            /* beam-0 indicator LED */
+    DDRB = 0x7F;   /* PB0-PB6 as outputs: one indicator LED per beam */
 
     adc_init();
     uart_init();
 
-    /* Baseline calibration: assume beam 0 is clear at boot */
-    uint32_t sum = 0;
-    for (uint8_t i = 0; i < CALIBRATION_SAMPLES; i++) {
-        sum += adc_read(0);
-        _delay_ms(2);
+    /* Baseline calibration: assume all beams are clear at boot */
+    for (uint8_t ch = 0; ch < NUM_BEAMS; ch++) {
+        uint32_t sum = 0;
+        for (uint8_t i = 0; i < CALIBRATION_SAMPLES; i++) {
+            sum += adc_read(ch);
+            _delay_ms(2);
+        }
+        const uint16_t baseline = (uint16_t)(sum / CALIBRATION_SAMPLES);
+        beams[ch].trigger_thresh = (uint16_t)((uint32_t)baseline * TRIGGER_NUM / TRIGGER_DEN);
+        beams[ch].release_thresh = (uint16_t)((uint32_t)baseline * RELEASE_NUM / RELEASE_DEN);
+        beams[ch].blocked        = 0;
+        beams[ch].confirm_count  = 0;
     }
-    const uint16_t baseline        = (uint16_t)(sum / CALIBRATION_SAMPLES);
-    const uint16_t trigger_thresh  = (uint16_t)((uint32_t)baseline * TRIGGER_NUM / TRIGGER_DEN);
-    const uint16_t release_thresh  = (uint16_t)((uint32_t)baseline * RELEASE_NUM / RELEASE_DEN);
 
-    uint8_t  blocked         = 0;
-    uint8_t  confirm_count   = 0;
     uint8_t  last_mask       = 0x00;
     uint16_t heartbeat_ticks = 0;
 
     while (1) {
-        const uint16_t sample = adc_read(0);
+        uint8_t mask = 0x00;
 
-        if (!blocked && sample < trigger_thresh) {
-            if (++confirm_count >= CONFIRM_SAMPLES) {
-                blocked = 1;
-                confirm_count = 0;
+        for (uint8_t ch = 0; ch < NUM_BEAMS; ch++) {
+            const uint16_t sample = adc_read(ch);
+            beam_state_t *b = &beams[ch];
+
+            if (!b->blocked && sample < b->trigger_thresh) {
+                if (++b->confirm_count >= CONFIRM_SAMPLES) {
+                    b->blocked = 1;
+                    b->confirm_count = 0;
+                }
+            } else if (b->blocked && sample > b->release_thresh) {
+                if (++b->confirm_count >= CONFIRM_SAMPLES) {
+                    b->blocked = 0;
+                    b->confirm_count = 0;
+                }
+            } else {
+                b->confirm_count = 0;
             }
-        } else if (blocked && sample > release_thresh) {
-            if (++confirm_count >= CONFIRM_SAMPLES) {
-                blocked = 0;
-                confirm_count = 0;
+
+            if (b->blocked) {
+                PORTB |= (uint8_t)(1 << ch);
+                mask   |= (uint8_t)(1 << ch);
+            } else {
+                PORTB &= (uint8_t)~(1 << ch);
             }
-        } else {
-            confirm_count = 0;
         }
-
-        if (blocked) {
-            PORTB |= (1 << PB0);
-        } else {
-            PORTB &= (uint8_t)~(1 << PB0);
-        }
-
-        const uint8_t mask = blocked ? 0x01 : 0x00;
 
         if (mask != last_mask) {
             uart_send(mask);
