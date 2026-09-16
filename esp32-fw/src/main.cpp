@@ -50,7 +50,7 @@ void setup()
   if (!dfPlayer.begin(dfSerial)) {
     Serial.println("DFPlayer Mini not responding - check wiring/power/SD card.");
   } else {
-    dfPlayer.volume(20);        // 0-30
+    dfPlayer.volume(30);        // 0-30, maxed out
     Serial.println("DFPlayer Mini ready.");
   }
 
