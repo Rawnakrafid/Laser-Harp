@@ -57,16 +57,30 @@ int main(void)
 {
     DDRB |= (1 << PB0);            /* beam-0 indicator LED */
 
+    /* Quick startup blink test: 3 blinks to confirm startup */
+    for (uint8_t i = 0; i < 3; i++) {
+        PORTB |= (1 << PB0);
+        _delay_ms(100);
+        PORTB &= (uint8_t)~(1 << PB0);
+        _delay_ms(100);
+    }
+
     adc_init();
     uart_init();
 
-    /* Baseline calibration: assume beam 0 is clear at boot */
+    /* Baseline calibration */
     uint32_t sum = 0;
     for (uint8_t i = 0; i < CALIBRATION_SAMPLES; i++) {
         sum += adc_read(0);
         _delay_ms(2);
     }
-    const uint16_t baseline        = (uint16_t)(sum / CALIBRATION_SAMPLES);
+    uint16_t baseline = (uint16_t)(sum / CALIBRATION_SAMPLES);
+
+    /* Fallback protection */
+    if (baseline < 200) {
+        baseline = 600;
+    }
+
     const uint16_t trigger_thresh  = (uint16_t)((uint32_t)baseline * TRIGGER_NUM / TRIGGER_DEN);
     const uint16_t release_thresh  = (uint16_t)((uint32_t)baseline * RELEASE_NUM / RELEASE_DEN);
 
@@ -105,7 +119,7 @@ int main(void)
             last_mask = mask;
             heartbeat_ticks = 0;
         } else if (++heartbeat_ticks >= HEARTBEAT_LOOPS) {
-            uart_send(mask);           /* heartbeat: link-alive signal even with no change */
+            uart_send(mask);           /* heartbeat */
             heartbeat_ticks = 0;
         }
 

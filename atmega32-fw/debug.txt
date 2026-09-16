@@ -1,15 +1,12 @@
 
-##to read all the content from atmega
-~/.platformio/packages/tool-avrdude/bin/avrdude -Pusb -c usbasp -p atmega32 -C ~/.platformio/packages/tool-avrdude/avrdude.conf -U flash:r:chip_contents.hex:i
+## Read all flash contents from ATmega32 to a hex file:
+avrdude -c usbasp -p m32 -B 10 -U flash:r:chip_contents_read.hex:i
 
-## initialise, without doing anything 
+## Test connection / probe ATmega32:
+avrdude -c usbasp -p m32 -B 10 -v
 
-~/.platformio/packages/tool-avrdude/bin/avrdude -Pusb -B 200 -c usbasp -p atmega32 -C ~/.platformio/packages/tool-avrdude/avrdude.conf -v
+## Flash compiled hex to ATmega32:
+avrdude -c usbasp -p m32 -B 10 -U flash:w:main.hex:i
 
-
-## upload 
-
-~/.platformio/penv/bin/pio run -t upload
-
-## erase chip_contents
-~/.platformio/packages/tool-avrdude/bin/avrdude -Pusb -B 200 -c usbasp -p atmega32 -C ~/.platformio/packages/tool-avrdude/avrdude.conf -e
+## Erase chip:
+avrdude -c usbasp -p m32 -B 10 -e

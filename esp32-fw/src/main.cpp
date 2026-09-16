@@ -50,8 +50,9 @@ void setup()
   if (!dfPlayer.begin(dfSerial)) {
     Serial.println("DFPlayer Mini not responding - check wiring/power/SD card.");
   } else {
-    dfPlayer.volume(20);        // 0-30
-    Serial.println("DFPlayer Mini ready.");
+    dfPlayer.volume(30);        // Maximum volume (0 - 30)
+    dfPlayer.EQ(DFPLAYER_EQ_NORMAL); // Clean equalizer setting
+    Serial.println("DFPlayer Mini ready at MAX volume (30).");
   }
 
   lastRxMs = millis();
@@ -68,9 +69,10 @@ void loop()
     for (uint8_t beam = 0; beam < NUM_NOTE_TRACKS; beam++) {
       const uint8_t bit = (uint8_t)(1 << beam);
       if ((changed & bit) && (mask & bit)) {          // this beam just got blocked -> note on
-        const uint8_t track = beam + 1;                // beam 0 -> 0001_C4.mp3, beam 1 -> 0002_D4.mp3, ...
-        Serial.printf("Beam %u blocked -> playMp3Folder(%u)\n", beam, track);
-        dfPlayer.playMp3Folder(track);
+        uint8_t track = 8;                             // play 0008.mp3 for beam 0
+        Serial.printf("Beam %u blocked -> playing track %u (0008.mp3)\n", beam, track);
+        dfPlayer.playMp3Folder(track);                // plays /MP3/0008.mp3
+        dfPlayer.play(track);                         // fallback if file is placed in root /0008.mp3
       }
       // beam cleared: let the note ring out naturally instead of cutting it off
     }
@@ -78,8 +80,6 @@ void loop()
   }
 
   if (millis() - lastRxMs > LINK_TIMEOUT_MS) {
-    // With only beam 0 wired up there's nothing extra to silence here, but
-    // once several beams are live this is where a dead-link timeout would
-    // go (dfPlayer.stop()) so nothing gets stuck sounding forever.
+    // dead-link timeout
   }
 }
