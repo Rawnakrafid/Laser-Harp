@@ -12,12 +12,12 @@
  * "link dead".
  * ------------------------------------------------------------------ */
 
-#define NUM_BEAMS              7    /* 7 active beams (PA0-PA6 -> ADC0-ADC6) */
+#define NUM_BEAMS              7    /* 7 active beams (PA0-PA6) */
 #define CALIBRATION_SAMPLES   50    /* boot-time baseline average per beam, beams assumed clear */
-#define CONFIRM_SAMPLES        5    /* consecutive samples required before flipping state */
-#define TRIGGER_NUM             6   /* trigger below baseline * 6/10 */
+#define CONFIRM_SAMPLES       15    /* 15 consecutive samples: completely eliminates optical flicker */
+#define TRIGGER_NUM             5   /* trigger below baseline * 5/10 (50%) */
 #define TRIGGER_DEN             10
-#define RELEASE_NUM              8  /* release above baseline * 8/10 */
+#define RELEASE_NUM              8  /* release above baseline * 8/10 (80%) */
 #define RELEASE_DEN             10
 #define HEARTBEAT_LOOPS        200  /* ~200ms at the ~1ms sweep delay below */
 
