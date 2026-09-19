@@ -2,21 +2,17 @@
 #include <DFRobotDFPlayerMini.h>
 
 /* ------------------------------------------------------------------
- * Laser Harp - ESP32 audio engine (DFPlayer Mini version, 7 beams)
+ * Laser Harp - ESP32 audio engine (DFPlayer Mini version, 7 real beams)
  *
  * Receives a 1-byte beam-state mask from the ATmega32 (bit i = beam i
- * blocked, i = 0..6) and tells the DFPlayer which track to play.
+ * blocked, i = 0..6) and plays that beam's own note directly:
+ *   beam 0 -> track 1 (0001_C4.mp3), beam 1 -> track 2 (0002_D4.mp3),
+ *   ... beam 6 -> track 7 (0007_B4.mp3)
  *
- * Switched from playMp3Folder() to playFolder() for faster track
- * selection: playMp3Folder() has to pattern-match a 4-digit prefix
- * against arbitrary filenames in a folder named "MP3", which can add
- * a few hundred ms of scan delay depending on the card. playFolder()
- * addresses a folder/file pair by strict numeric position (folder
- * "01", files "001.mp3".."007.mp3") and is the faster, low-latency
- * selection method per DFRobot's own docs. SD card layout is now:
- *   /01/001.mp3  (beam 0, C4)
- *   /01/002.mp3  (beam 1, D4)
- *   ... /01/007.mp3 (beam 6, B4)
+ * SD card layout (confirmed still in use): a folder literally named
+ * "MP3" at the card's root, containing files whose names start with a
+ * 4-digit prefix (0001...mp3 .. 0007...mp3) - played via
+ * dfPlayer.playMp3Folder(N).
  * ------------------------------------------------------------------ */
 
 // UART2 to ATmega32 - keeps USB Serial (pins 1/3) free for the debug console
@@ -27,7 +23,7 @@
 #define DF_RX_PIN 26       // ESP32 RX1  <-- DFPlayer TX
 #define DF_TX_PIN 27       // ESP32 TX1  --> DFPlayer RX (direct wire is fine; DFPlayer's RX tolerates 3.3V logic)
 
-#define TOTAL_TRACKS 7     // 001.mp3 through 007.mp3
+#define NUM_BEAMS 7         // beams 0-6 -> tracks 1-7 (0001_C4.mp3 .. 0007_B4.mp3)
 
 HardwareSerial dfSerial(1);
 DFRobotDFPlayerMini dfPlayer;
@@ -36,8 +32,10 @@ uint8_t lastMask = 0x00;
 unsigned long lastRxMs = 0;
 const unsigned long LINK_TIMEOUT_MS = 1000;
 
-uint8_t currentTrack = 1;
-unsigned long lastTriggerMs = 0;
+// Per-beam debounce so a fast run across different beams doesn't get
+// blocked by another beam's cooldown - only re-triggering the *same*
+// beam too quickly is guarded against.
+unsigned long lastTriggerMs[NUM_BEAMS] = {0};
 const unsigned long DEBOUNCE_MS = 300;
 
 void printDetail(uint8_t type, int value) {
@@ -84,7 +82,7 @@ void setup()
   } else {
     dfPlayer.volume(18);        // Safe stable volume: prevents brownout lockup (0-30)
     dfPlayer.enableDAC();
-    Serial.println("DFPlayer Mini ready (Volume: 18 - Stable, Sequential Loop 1-7).");
+    Serial.println("DFPlayer Mini ready (Volume: 18 - Stable, 7-beam direct mapping).");
   }
 
   lastRxMs = millis();
@@ -102,24 +100,22 @@ void loop()
     lastRxMs = millis();
 
     const uint8_t changed = mask ^ lastMask;
-    
-    // Check if beam 0 was just interrupted (transition from 0 to 1)
-    if ((changed & 0x01) && (mask & 0x01)) {
-      if (millis() - lastTriggerMs > DEBOUNCE_MS) {
-        const uint8_t trackToPlay = currentTrack;
-        Serial.printf("Beam 0 interrupted -> Playing track %04u (000%u.mp3)\n", trackToPlay, trackToPlay);
-        dfPlayer.playMp3Folder(trackToPlay);
-
-        // Advance to next music track in loop: 1 -> 2 -> 3 -> 4 -> 5 -> 6 -> 7 -> 1 ...
-        currentTrack = (currentTrack % TOTAL_TRACKS) + 1;
-        lastTriggerMs = millis();
+    for (uint8_t beam = 0; beam < NUM_BEAMS; beam++) {
+      const uint8_t bit = (uint8_t)(1 << beam);
+      if ((changed & bit) && (mask & bit)) {              // this beam just got blocked -> note on
+        if (millis() - lastTriggerMs[beam] > DEBOUNCE_MS) {
+          const uint8_t track = beam + 1;                  // beam 0 -> track 1, beam 1 -> track 2, ...
+          Serial.printf("Beam %u blocked -> playing track %04u (000%u...mp3)\n", beam, track, track);
+          dfPlayer.playMp3Folder(track);
+          lastTriggerMs[beam] = millis();
+        }
       }
+      // beam cleared: let the note ring out naturally instead of cutting it off
     }
-
     lastMask = mask;
   }
 
   if (millis() - lastRxMs > LINK_TIMEOUT_MS) {
-    // dead-link timeout
+    // dead-link timeout hook, if ever needed
   }
 }
