@@ -68,15 +68,30 @@ const unsigned long MIN_DF_COMMAND_GAP_MS = 100;
 // in a row is the module telling us it's lost frame sync. Re-running
 // begin() forces a clean resync instead of staying stuck until someone
 // power-cycles the board by hand.
+//
+// Guarded with its own cooldown (separate from RESYNC_COOLDOWN_MS's use
+// elsewhere) so a module that's still unhappy right after a resync can't
+// trigger another resync attempt within milliseconds - that "resync storm"
+// (begin() firing over and over with no time for the module to actually
+// settle) is worse than doing nothing, and can look exactly like total
+// silence since the module never gets a stable moment to accept a play
+// command in between.
 uint8_t dfErrorStreak = 0;
 const uint8_t DF_ERROR_STREAK_LIMIT = 3;
+unsigned long lastResyncMs = 0;
+const unsigned long RESYNC_COOLDOWN_MS = 10000;
 
 void resyncDfPlayer() {
+  const unsigned long now = millis();
+  dfErrorStreak = 0;
+  if (now - lastResyncMs < RESYNC_COOLDOWN_MS) {
+    return;   // already tried recently - give it time to settle instead of hammering begin()
+  }
+  lastResyncMs = now;
   Serial.println(F("DFPlayer: too many errors in a row, re-syncing link..."));
   dfPlayer.begin(dfSerial);
   dfPlayer.volume(18);
   dfPlayer.enableDAC();
-  dfErrorStreak = 0;
 }
 
 void printDetail(uint8_t type, int value) {
