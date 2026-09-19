@@ -13,6 +13,15 @@
  * "MP3" at the card's root, containing files whose names start with a
  * 4-digit prefix (0001...mp3 .. 0007...mp3) - played via
  * dfPlayer.playMp3Folder(N).
+ *
+ * NOTE (2026-09-19): a teammate's branch briefly replaced this with a
+ * "play one fixed track (0008.mp3) on any beam, then ignore every beam
+ * for up to 15s" design (a global isPlaying gate). That was reverted -
+ * confirmed to be the actual cause of "beam plays once then goes dead
+ * until reconnected": if the DFPlayerPlayFinished callback doesn't fire
+ * reliably, isPlaying gets stuck true and every beam is ignored until
+ * the 15s timeout. This file goes back to independent per-beam
+ * triggering with no global lockout.
  * ------------------------------------------------------------------ */
 
 // UART2 to ATmega32 - keeps USB Serial (pins 1/3) free for the debug console
@@ -23,7 +32,7 @@
 #define DF_RX_PIN 26       // ESP32 RX1  <-- DFPlayer TX
 #define DF_TX_PIN 27       // ESP32 TX1  --> DFPlayer RX (direct wire is fine; DFPlayer's RX tolerates 3.3V logic)
 
-#define NUM_BEAMS 7         // 7 active beams (0 to 6)
+#define NUM_BEAMS 7         // beams 0-6 -> tracks 1-7 (0001_C4.mp3 .. 0007_B4.mp3)
 
 HardwareSerial dfSerial(1);
 DFRobotDFPlayerMini dfPlayer;
@@ -32,13 +41,12 @@ uint8_t lastMask = 0x00;
 unsigned long lastRxMs = 0;
 const unsigned long LINK_TIMEOUT_MS = 1000;
 
+// Per-beam debounce so a fast run across different beams doesn't get
+// blocked by another beam's cooldown - only re-triggering the *same*
+// beam too quickly is guarded against. No global "only one thing can
+// play" gate - each beam is independent.
 unsigned long lastTriggerMs[NUM_BEAMS] = {0};
 const unsigned long DEBOUNCE_MS = 300;
-
-int8_t activeBeam = -1;
-bool isPlaying = false;
-unsigned long lastGlobalPlayMs = 0;
-const unsigned long MIN_RETRIGGER_MS = 600; // Minimum time before restarting same track
 
 void printDetail(uint8_t type, int value) {
   switch (type) {
@@ -58,9 +66,9 @@ void printDetail(uint8_t type, int value) {
       Serial.println(F("DFPlayer: Card Online!"));
       break;
     case DFPlayerPlayFinished:
-      Serial.print(F("DFPlayer: Track Finished -> Ready for next interrupt.\n"));
-      isPlaying = false;
-      activeBeam = -1;
+      Serial.print(F("DFPlayer: Number "));
+      Serial.print(value);
+      Serial.println(F(" Play Finished!"));
       break;
     case DFPlayerError:
       Serial.print(F("DFPlayer: Error Code "));
@@ -77,33 +85,32 @@ void setup()
   Serial2.begin(9600, SERIAL_8N1, ATMEGA_RX_PIN, ATMEGA_TX_PIN);
   dfSerial.begin(9600, SERIAL_8N1, DF_RX_PIN, DF_TX_PIN);
 
-  delay(600);
+  delay(3000);   // DFPlayer's own datasheet: 1.5-3s (sometimes longer) to finish mounting
+                 // the SD card before it will ACK any UART command - 600ms was too short
 
-  if (!dfPlayer.begin(dfSerial, false)) { // false = no ACK required (prevents TimeOut lockups)
+  bool dfOk = dfPlayer.begin(dfSerial);
+  if (!dfOk) {
+    Serial.println("DFPlayer not responding on first try, retrying once more...");
+    delay(1000);
+    dfOk = dfPlayer.begin(dfSerial);
+  }
+
+  if (!dfOk) {
     Serial.println("DFPlayer Mini not responding - check wiring/power/SD card.");
   } else {
-    dfPlayer.volume(22);        // Clean stable volume (0-30)
+    dfPlayer.volume(18);        // Safe stable volume: prevents brownout lockup (0-30)
     dfPlayer.enableDAC();
-    Serial.println("DFPlayer Mini ready (Continuous Playback Mode).");
+    Serial.println("DFPlayer Mini ready (Volume: 18 - Stable, 7-beam direct mapping).");
   }
 
   lastRxMs = millis();
   Serial.println("Ready - waiting for ATmega32 beam data on Serial2 (9600 baud).");
 }
 
-unsigned long playStartMs = 0;
-const unsigned long TRACK_LENGTH_MS = 15000; // Plays up to 15 seconds uninterrupted unless track finishes earlier
-
 void loop()
 {
   if (dfPlayer.available()) {
     printDetail(dfPlayer.readType(), dfPlayer.read());
-  }
-
-  // Auto-reset isPlaying if track has finished or max duration reached
-  if (isPlaying && (millis() - playStartMs > TRACK_LENGTH_MS)) {
-    Serial.println("Track play window complete -> Ready for next trigger.");
-    isPlaying = false;
   }
 
   if (Serial2.available()) {
@@ -113,23 +120,20 @@ void loop()
     const uint8_t changed = mask ^ lastMask;
     for (uint8_t beam = 0; beam < NUM_BEAMS; beam++) {
       const uint8_t bit = (uint8_t)(1 << beam);
-      
-      // Beam just transitioned from CLEAR to BLOCKED
-      if ((changed & bit) && (mask & bit)) {
-        if (!isPlaying) {
-          Serial.printf("Beam %u (LDR %u) hit -> Starting 0008.mp3\n", beam, beam + 1);
-          dfPlayer.playMp3Folder(8);
-          isPlaying = true;
-          playStartMs = millis();
-        } else {
-          // Song is already playing smoothly -> Do NOT restart it!
+      if ((changed & bit) && (mask & bit)) {              // this beam just got blocked -> note on
+        if (millis() - lastTriggerMs[beam] > DEBOUNCE_MS) {
+          const uint8_t track = beam + 1;                  // beam 0 -> track 1, beam 1 -> track 2, ...
+          Serial.printf("Beam %u blocked -> playing track %04u (000%u...mp3)\n", beam, track, track);
+          dfPlayer.playMp3Folder(track);
+          lastTriggerMs[beam] = millis();
         }
       }
+      // beam cleared: let the note ring out naturally instead of cutting it off
     }
     lastMask = mask;
   }
 
   if (millis() - lastRxMs > LINK_TIMEOUT_MS) {
-    // dead-link timeout hook
+    // dead-link timeout hook, if ever needed
   }
 }

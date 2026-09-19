@@ -15,13 +15,17 @@
 #define NUM_BEAMS              7    /* 7 active beams (PA0-PA6) */
 #define CALIBRATION_SAMPLES   50    /* boot-time baseline average per beam, beams assumed clear */
 #define CONFIRM_SAMPLES       15    /* 15 consecutive samples: completely eliminates optical flicker */
-#define TRIGGER_NUM             5   /* trigger below baseline * 5/10 (50%) */
+#define TRIGGER_NUM              5  /* trigger below baseline * 5/10 (50%) */
 #define TRIGGER_DEN             10
 #define RELEASE_NUM              8  /* release above baseline * 8/10 (80%) */
 #define RELEASE_DEN             10
 #define HEARTBEAT_LOOPS        200  /* ~200ms at the ~1ms sweep delay below */
+#define BASELINE_EMA_SHIFT      6   /* ongoing drift correction: new = old + (sample-old)/64, only while stably clear */
+#define BASELINE_FALLBACK      600  /* used if a channel calibrates suspiciously dark (laser unaligned/blocked at boot) */
+#define BASELINE_MIN_VALID     200
 
 typedef struct {
+    uint16_t baseline;
     uint16_t trigger_thresh;
     uint16_t release_thresh;
     uint8_t  blocked;
@@ -29,6 +33,12 @@ typedef struct {
 } beam_state_t;
 
 static beam_state_t beams[NUM_BEAMS];
+
+static void recompute_thresholds(beam_state_t *b)
+{
+    b->trigger_thresh = (uint16_t)((uint32_t)b->baseline * TRIGGER_NUM / TRIGGER_DEN);
+    b->release_thresh = (uint16_t)((uint32_t)b->baseline * RELEASE_NUM / RELEASE_DEN);
+}
 
 static void adc_init(void)
 {
@@ -64,7 +74,12 @@ int main(void)
 {
     DDRB = 0x7F;   /* PB0-PB6 as outputs: one indicator LED per beam */
 
-    /* Visual 3-blink startup indicator on all indicator LEDs */
+    /* Visual 3-blink startup indicator on all indicator LEDs - also doubles as a
+     * ~600ms power-rail settle window before calibration starts, which matters
+     * most right after a brownout reset (e.g. from the DFPlayer's amp current
+     * spike), where the rail can still be recovering for the first tens of ms.
+     * Calibrating off a transient reading here is exactly how a beam went
+     * "dead" before. */
     for (uint8_t i = 0; i < 3; i++) {
         PORTB = 0x7F;
         _delay_ms(100);
@@ -83,13 +98,13 @@ int main(void)
             _delay_ms(2);
         }
         uint16_t baseline = (uint16_t)(sum / CALIBRATION_SAMPLES);
-        if (baseline < 200) {
-            baseline = 600; /* safe fallback if laser is unaligned at boot */
+        if (baseline < BASELINE_MIN_VALID) {
+            baseline = BASELINE_FALLBACK; /* safe fallback if laser is unaligned/blocked at boot */
         }
-        beams[ch].trigger_thresh = (uint16_t)((uint32_t)baseline * TRIGGER_NUM / TRIGGER_DEN);
-        beams[ch].release_thresh = (uint16_t)((uint32_t)baseline * RELEASE_NUM / RELEASE_DEN);
+        beams[ch].baseline       = baseline;
         beams[ch].blocked        = 0;
         beams[ch].confirm_count  = 0;
+        recompute_thresholds(&beams[ch]);
     }
 
     uint8_t  last_mask       = 0x00;
@@ -114,6 +129,20 @@ int main(void)
                 }
             } else {
                 b->confirm_count = 0;
+            }
+
+            /* Slow baseline drift correction: only while stably clear (not
+             * blocked, not mid-debounce), nudge the baseline toward the
+             * current reading and recompute thresholds. This is what makes a
+             * bad calibration (ambient light drift over a session, or a reset
+             * that happened while a beam was shadowed but still above the
+             * <200 fallback cutoff) self-heal within a couple seconds the
+             * next time that beam is clear, instead of staying wrong until
+             * the whole board is power-cycled again. */
+            if (!b->blocked && b->confirm_count == 0) {
+                const int32_t diff = (int32_t)sample - (int32_t)b->baseline;
+                b->baseline = (uint16_t)((int32_t)b->baseline + (diff >> BASELINE_EMA_SHIFT));
+                recompute_thresholds(b);
             }
 
             if (b->blocked) {
