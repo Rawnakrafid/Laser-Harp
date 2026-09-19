@@ -77,17 +77,20 @@ void setup()
 
   delay(600);
 
-  if (!dfPlayer.begin(dfSerial)) {
+  if (!dfPlayer.begin(dfSerial, false)) { // false = no ACK required (prevents TimeOut lockups)
     Serial.println("DFPlayer Mini not responding - check wiring/power/SD card.");
   } else {
-    dfPlayer.volume(18);        // Safe stable volume: prevents brownout lockup (0-30)
+    dfPlayer.volume(24);        // Stable volume (0-30)
     dfPlayer.enableDAC();
-    Serial.println("DFPlayer Mini ready (Volume: 18 - Stable, 7-beam direct mapping).");
+    Serial.println("DFPlayer Mini ready (Volume: 24, ACK: Off).");
   }
 
   lastRxMs = millis();
   Serial.println("Ready - waiting for ATmega32 beam data on Serial2 (9600 baud).");
 }
+
+unsigned long lastGlobalPlayMs = 0;
+const unsigned long GLOBAL_COOLDOWN_MS = 250; // DFPlayer needs at least 250ms to start decoding a track
 
 void loop()
 {
@@ -103,11 +106,12 @@ void loop()
     for (uint8_t beam = 0; beam < NUM_BEAMS; beam++) {
       const uint8_t bit = (uint8_t)(1 << beam);
       if ((changed & bit) && (mask & bit)) {              // this beam just got blocked -> note on
-        if (millis() - lastTriggerMs[beam] > DEBOUNCE_MS) {
+        if (millis() - lastGlobalPlayMs > GLOBAL_COOLDOWN_MS && millis() - lastTriggerMs[beam] > DEBOUNCE_MS) {
           const uint8_t track = beam + 1;                  // beam 0 -> track 1, beam 1 -> track 2, ...
           Serial.printf("Beam %u blocked -> playing track %04u (000%u...mp3)\n", beam, track, track);
           dfPlayer.playMp3Folder(track);
           lastTriggerMs[beam] = millis();
+          lastGlobalPlayMs = millis();
         }
       }
       // beam cleared: let the note ring out naturally instead of cutting it off

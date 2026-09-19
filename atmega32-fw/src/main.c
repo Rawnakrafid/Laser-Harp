@@ -12,7 +12,7 @@
  * "link dead".
  * ------------------------------------------------------------------ */
 
-#define NUM_BEAMS              7    /* PA0-PA6, one per recorded note */
+#define NUM_BEAMS              7    /* 7 active beams (PA0-PA6 -> ADC0-ADC6) */
 #define CALIBRATION_SAMPLES   50    /* boot-time baseline average per beam, beams assumed clear */
 #define CONFIRM_SAMPLES        5    /* consecutive samples required before flipping state */
 #define TRIGGER_NUM             6   /* trigger below baseline * 6/10 */
@@ -64,6 +64,14 @@ int main(void)
 {
     DDRB = 0x7F;   /* PB0-PB6 as outputs: one indicator LED per beam */
 
+    /* Visual 3-blink startup indicator on all indicator LEDs */
+    for (uint8_t i = 0; i < 3; i++) {
+        PORTB = 0x7F;
+        _delay_ms(100);
+        PORTB = 0x00;
+        _delay_ms(100);
+    }
+
     adc_init();
     uart_init();
 
@@ -74,7 +82,10 @@ int main(void)
             sum += adc_read(ch);
             _delay_ms(2);
         }
-        const uint16_t baseline = (uint16_t)(sum / CALIBRATION_SAMPLES);
+        uint16_t baseline = (uint16_t)(sum / CALIBRATION_SAMPLES);
+        if (baseline < 200) {
+            baseline = 600; /* safe fallback if laser is unaligned at boot */
+        }
         beams[ch].trigger_thresh = (uint16_t)((uint32_t)baseline * TRIGGER_NUM / TRIGGER_DEN);
         beams[ch].release_thresh = (uint16_t)((uint32_t)baseline * RELEASE_NUM / RELEASE_DEN);
         beams[ch].blocked        = 0;
