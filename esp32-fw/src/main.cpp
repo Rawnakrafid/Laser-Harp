@@ -90,7 +90,7 @@ void resyncDfPlayer() {
   lastResyncMs = now;
   Serial.println(F("DFPlayer: too many errors in a row, re-syncing link..."));
   dfPlayer.begin(dfSerial);
-  dfPlayer.volume(18);
+  dfPlayer.volume(26);
   dfPlayer.enableDAC();
 }
 
@@ -148,9 +148,9 @@ void setup()
   if (!dfOk) {
     Serial.println("DFPlayer Mini not responding - check wiring/power/SD card.");
   } else {
-    dfPlayer.volume(18);        // Safe stable volume: prevents brownout lockup (0-30)
+    dfPlayer.volume(26);        // Volume 26
     dfPlayer.enableDAC();
-    Serial.println("DFPlayer Mini ready (Volume: 18 - Stable, 7-beam direct mapping).");
+    Serial.println("DFPlayer Mini ready (Volume: 26 - 7-beam direct mapping).");
   }
 
   lastRxMs = millis();
@@ -170,12 +170,12 @@ void loop()
     const uint8_t changed = mask ^ lastMask;
     for (uint8_t beam = 0; beam < NUM_BEAMS; beam++) {
       const uint8_t bit = (uint8_t)(1 << beam);
-      if ((changed & bit) && (mask & bit)) {              // this beam just got blocked -> note on
+      if ((changed & bit) && !(mask & bit)) {             // this beam just got blocked (light lost) -> note on
         const unsigned long now = millis();
         if (now - lastTriggerMs[beam] > DEBOUNCE_MS && now - lastDfCommandMs >= MIN_DF_COMMAND_GAP_MS) {
           const uint8_t track = beam + 1;                  // beam 0 -> track 1, beam 1 -> track 2, ...
-          Serial.printf("Beam %u blocked -> playing track %04u (000%u...mp3)\n", beam, track, track);
-          dfPlayer.playMp3Folder(track);
+          Serial.printf("Beam %u blocked -> playing track %u (000%u.mp3)\n", beam, track, track);
+          dfPlayer.play(track);
           lastTriggerMs[beam] = now;
           lastDfCommandMs = now;
         }
