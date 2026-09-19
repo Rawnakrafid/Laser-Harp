@@ -48,13 +48,46 @@ const unsigned long LINK_TIMEOUT_MS = 1000;
 unsigned long lastTriggerMs[NUM_BEAMS] = {0};
 const unsigned long DEBOUNCE_MS = 300;
 
+// Minimum gap between ANY two commands sent to the DFPlayer over its own
+// UART link, regardless of which beam triggered them. The DFPlayer Mini's
+// serial receiver needs a little breathing room between command frames
+// (0x7E ... 0xEF) - firing two commands back-to-back with ~0ms between
+// them (e.g. a fast run across several beams, or two beams crossing the
+// same ~1ms ATmega sample within one mask byte) doesn't corrupt anything
+// immediately, but repeatedly doing it nudges the module's receiver a
+// little further out of frame sync each time. That's consistent with
+// "works perfectly at first, then degrades into a tick loop after a while
+// of normal playing" - the desync accumulates rather than happening in
+// one shot. Spacing every command out fixes it at the source instead of
+// just reacting to the symptom once it appears.
+unsigned long lastDfCommandMs = 0;
+const unsigned long MIN_DF_COMMAND_GAP_MS = 100;
+
+// Self-healing safety net: if the link still desyncs despite the spacing
+// above (e.g. from noise on the wire), a run of TimeOut/WrongStack errors
+// in a row is the module telling us it's lost frame sync. Re-running
+// begin() forces a clean resync instead of staying stuck until someone
+// power-cycles the board by hand.
+uint8_t dfErrorStreak = 0;
+const uint8_t DF_ERROR_STREAK_LIMIT = 3;
+
+void resyncDfPlayer() {
+  Serial.println(F("DFPlayer: too many errors in a row, re-syncing link..."));
+  dfPlayer.begin(dfSerial);
+  dfPlayer.volume(18);
+  dfPlayer.enableDAC();
+  dfErrorStreak = 0;
+}
+
 void printDetail(uint8_t type, int value) {
   switch (type) {
     case TimeOut:
       Serial.println(F("DFPlayer: Time Out!"));
+      if (++dfErrorStreak >= DF_ERROR_STREAK_LIMIT) resyncDfPlayer();
       break;
     case WrongStack:
       Serial.println(F("DFPlayer: Stack Wrong!"));
+      if (++dfErrorStreak >= DF_ERROR_STREAK_LIMIT) resyncDfPlayer();
       break;
     case DFPlayerCardInserted:
       Serial.println(F("DFPlayer: Card Inserted!"));
@@ -64,11 +97,13 @@ void printDetail(uint8_t type, int value) {
       break;
     case DFPlayerCardOnline:
       Serial.println(F("DFPlayer: Card Online!"));
+      dfErrorStreak = 0;
       break;
     case DFPlayerPlayFinished:
       Serial.print(F("DFPlayer: Number "));
       Serial.print(value);
       Serial.println(F(" Play Finished!"));
+      dfErrorStreak = 0;         // a clean finished-track report means the link is healthy again
       break;
     case DFPlayerError:
       Serial.print(F("DFPlayer: Error Code "));
@@ -121,12 +156,18 @@ void loop()
     for (uint8_t beam = 0; beam < NUM_BEAMS; beam++) {
       const uint8_t bit = (uint8_t)(1 << beam);
       if ((changed & bit) && (mask & bit)) {              // this beam just got blocked -> note on
-        if (millis() - lastTriggerMs[beam] > DEBOUNCE_MS) {
+        const unsigned long now = millis();
+        if (now - lastTriggerMs[beam] > DEBOUNCE_MS && now - lastDfCommandMs >= MIN_DF_COMMAND_GAP_MS) {
           const uint8_t track = beam + 1;                  // beam 0 -> track 1, beam 1 -> track 2, ...
           Serial.printf("Beam %u blocked -> playing track %04u (000%u...mp3)\n", beam, track, track);
           dfPlayer.playMp3Folder(track);
-          lastTriggerMs[beam] = millis();
+          lastTriggerMs[beam] = now;
+          lastDfCommandMs = now;
         }
+        // else: dropped to protect the DFPlayer UART link from back-to-back
+        // commands - the DFPlayer can only play one thing at a time anyway,
+        // so losing an overlapping trigger costs nothing but a stricter
+        // desync-immune link.
       }
       // beam cleared: let the note ring out naturally instead of cutting it off
     }
