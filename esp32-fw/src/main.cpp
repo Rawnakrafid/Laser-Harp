@@ -1,4 +1,5 @@
 #include <Arduino.h>
+<<<<<<< Updated upstream
 #include <DFRobotDFPlayerMini.h>
 
 /* ------------------------------------------------------------------
@@ -36,11 +37,36 @@
 
 HardwareSerial dfSerial(1);
 DFRobotDFPlayerMini dfPlayer;
+=======
+#include "notes_data.h"
+
+/* ------------------------------------------------------------------
+ * Laser Harp - ESP32 polyphonic DAC audio engine (no DFPlayer)
+ *
+ * Uses dacWrite(GPIO25) with a hardware timer at 8000 Hz to play
+ * up to 7 notes simultaneously. When multiple beams are blocked,
+ * their waveforms are mixed (averaged) together in real time.
+ *
+ * Audio output on GPIO25 -> connect to PAM8403 amplifier input.
+ *
+ * Beam 0 -> noteC4, Beam 1 -> noteD4, ... Beam 6 -> noteB4.
+ * ------------------------------------------------------------------ */
+
+// UART2 to ATmega32
+#define ATMEGA_RX_PIN 16   // ESP32 RX2 <-- ATmega32 PD1 (TXD) via voltage divider
+#define ATMEGA_TX_PIN 17   // ESP32 TX2 --> ATmega32 PD0 (RXD)
+
+#define DAC_PIN 25         // ESP32 built-in DAC channel 1
+
+#define NUM_BEAMS 7
+#define SAMPLE_RATE 8000   // must match notes_data.h
+>>>>>>> Stashed changes
 
 uint8_t lastMask = 0x00;
 unsigned long lastRxMs = 0;
 const unsigned long LINK_TIMEOUT_MS = 1000;
 
+<<<<<<< Updated upstream
 // Per-beam debounce so a fast run across different beams doesn't get
 // blocked by another beam's cooldown - only re-triggering the *same*
 // beam too quickly is guarded against. No global "only one thing can
@@ -126,6 +152,42 @@ void printDetail(uint8_t type, int value) {
       break;
     default:
       break;
+=======
+// Per-beam playback state: each beam has its own independent position
+// in its note data. Multiple beams can be active simultaneously.
+volatile bool beamActive[NUM_BEAMS] = {false};
+volatile uint32_t notePos[NUM_BEAMS] = {0};
+
+// Hardware timer for sample output at 8000 Hz
+hw_timer_t *sampleTimer = NULL;
+
+void IRAM_ATTR onSampleTimer() {
+  int32_t mixSum = 0;
+  uint8_t activeCount = 0;
+
+  for (uint8_t b = 0; b < NUM_BEAMS; b++) {
+    if (!beamActive[b]) continue;
+
+    const NoteSample &note = NOTE_TABLE[b];
+    if (notePos[b] >= note.len) {
+      beamActive[b] = false;  // note finished naturally
+      continue;
+    }
+
+    // Samples are unsigned 8-bit (silence = 128), shift to signed for mixing
+    int16_t sample = (int16_t)note.data[notePos[b]] - 128;
+    mixSum += sample;
+    activeCount++;
+    notePos[b]++;
+  }
+
+  if (activeCount > 0) {
+    // Average to prevent clipping when multiple notes overlap
+    int16_t mixed = (int16_t)(mixSum / activeCount);
+    dacWrite(DAC_PIN, (uint8_t)(mixed + 128));
+  } else {
+    dacWrite(DAC_PIN, 128);  // silence
+>>>>>>> Stashed changes
   }
 }
 
@@ -135,6 +197,7 @@ void setup()
   Serial2.begin(9600, SERIAL_8N1, ATMEGA_RX_PIN, ATMEGA_TX_PIN);
   dfSerial.begin(9600, SERIAL_8N1, DF_RX_PIN, DF_TX_PIN);
 
+<<<<<<< Updated upstream
   delay(3000);   // DFPlayer's own datasheet: 1.5-3s (sometimes longer) to finish mounting
                  // the SD card before it will ACK any UART command - 600ms was too short
 
@@ -152,6 +215,25 @@ void setup()
     dfPlayer.enableDAC();
     Serial.println("DFPlayer Mini ready (Volume: 26 - 7-beam direct mapping).");
   }
+=======
+  // Set DAC pin to silence initially
+  dacWrite(DAC_PIN, 128);
+
+  // Setup hardware timer: 8000 Hz = 125 µs period
+  // Timer 0, prescaler 80 (1 MHz tick), count up
+  sampleTimer = timerBegin(0, 80, true);
+  timerAttachInterrupt(sampleTimer, &onSampleTimer, true);
+  timerAlarmWrite(sampleTimer, 125, true);  // 125 µs = 8000 Hz
+  timerAlarmEnable(sampleTimer);
+
+  // Quick audio test: play noteC4 for 500ms at boot
+  Serial.println("Playing test tone (C4) on GPIO25...");
+  notePos[0] = 0;
+  beamActive[0] = true;
+  delay(500);
+  beamActive[0] = false;
+  dacWrite(DAC_PIN, 128);
+>>>>>>> Stashed changes
 
   lastRxMs = millis();
   Serial.println("Ready - waiting for ATmega32 beam data on Serial2 (9600 baud).");
@@ -170,6 +252,7 @@ void loop()
     const uint8_t changed = mask ^ lastMask;
     for (uint8_t beam = 0; beam < NUM_BEAMS; beam++) {
       const uint8_t bit = (uint8_t)(1 << beam);
+<<<<<<< Updated upstream
       if ((changed & bit) && !(mask & bit)) {             // this beam just got blocked (light lost) -> note on
         const unsigned long now = millis();
         if (now - lastTriggerMs[beam] > DEBOUNCE_MS && now - lastDfCommandMs >= MIN_DF_COMMAND_GAP_MS) {
@@ -183,6 +266,15 @@ void loop()
         // commands - the DFPlayer can only play one thing at a time anyway,
         // so losing an overlapping trigger costs nothing but a stricter
         // desync-immune link.
+=======
+      if ((changed & bit) && (mask & bit)) {
+        // beam just got blocked -> (re)start this beam's note from beginning
+        // other active beams keep playing and mixing together
+        Serial.printf("Beam %u blocked -> note ON (mixing with %u other active)\n",
+                       beam, countActive());
+        notePos[beam] = 0;
+        beamActive[beam] = true;
+>>>>>>> Stashed changes
       }
       // beam cleared: let the note ring out naturally instead of cutting it off
     }
