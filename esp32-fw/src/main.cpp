@@ -1,100 +1,42 @@
 #include <Arduino.h>
-#include <driver/i2s.h>
+#include <driver/dac.h>
 #include "notes_data.h"
 
 /* ------------------------------------------------------------------
- * Laser Harp - ESP32 audio engine, SELF-MIXING VERSION (no DFPlayer)
+ * Laser Harp - ESP32 polyphonic DAC audio engine
  *
- * This branch replaces the DFPlayer Mini entirely. The DFPlayer can only
- * decode and play ONE file at a time - it has no way to mix multiple
- * notes together, which is required for real polyphony (several beams
- * sounding at once). So this version has the ESP32 itself generate the
- * audio: each note's raw waveform is embedded in flash (notes_data.h,
- * converted ahead of time from the same mp3s used on the DFPlayer's SD
- * card, via `ffmpeg -ar 8000 -ac 1 -f u8 -acodec pcm_u8`), and every
- * beam that's currently sounding has its own independent playback
- * position. Each audio tick, the ESP32 adds together the current sample
- * of every active note (averaged, to avoid clipping) and streams the
- * result out continuously via the ESP32's built-in DAC (I2S in
- * "built-in DAC" mode), on GPIO25 AND GPIO26 simultaneously (both carry
- * an identical copy of the mixed signal, so either pin can be used).
+ * Plays notes via the ESP32's built-in DAC on GPIO25, using a
+ * dedicated FreeRTOS task for rock-solid sample timing.
  *
- * IMPORTANT HARDWARE CHANGE from the DFPlayer version: the ESP32's DAC
- * output is weak and low-voltage - it cannot drive a speaker directly at
- * a usable volume. You need a small amplifier between GPIO25 (or 26) and
- * the speaker - a cheap PAM8403-style class-D amp module is the standard
- * choice. See WIRING_POLYPHONY.md for the exact connections. The
- * DFPlayer module and its SD card are not used at all in this version;
- * ESP32 GPIO26/27 (previously wired to the DFPlayer's TX/RX) are free.
- *
- * NOT YET IMPLEMENTED (separate feature, discussed but not built here):
- * sustaining a note for as long as its beam stays blocked. Right now,
- * exactly like the DFPlayer version, a beam-block event starts its note
- * from the beginning and it plays through to its own natural end -
- * multiple beams can now overlap/mix, but releasing a beam early doesn't
- * cut its note off, and holding a beam doesn't extend it.
- *
- * NOT YET COMPILE-TESTED: this sandbox has no ESP32/Arduino toolchain to
- * verify against (unlike the ATmega32 firmware, which is checked with
- * real avr-gcc every time). The I2S built-in-DAC API used below is a
- * well-established pattern, but if `pio run` reports a compile error,
- * paste the exact error back rather than assuming this needs a rewrite -
- * it's very likely a small, fixable API-signature mismatch against
- * whatever ESP-IDF version PlatformIO happens to fetch.
+ * Audio output: GPIO25 -> amplifier (PAM8403) -> speaker.
+ * Beam 0 -> C4, Beam 1 -> D4, ... Beam 6 -> B4.
+ * Multiple beams mix together when blocked simultaneously.
  * ------------------------------------------------------------------ */
 
-// UART2 to ATmega32 - unchanged from the DFPlayer version. The ATmega32
-// side (beam sensing) doesn't change at all for this feature.
-#define ATMEGA_RX_PIN 16   // ESP32 RX2  <-- ATmega32 PD1 (TXD) THROUGH THE VOLTAGE DIVIDER (5V -> ~3.3V)
-#define ATMEGA_TX_PIN 17   // ESP32 TX2  --> ATmega32 PD0 (RXD); direct wire is fine
+#define ATMEGA_RX_PIN 16
+#define ATMEGA_TX_PIN 17
+#define DAC_PIN 25
 
 #define NUM_BEAMS 7
-
-#define I2S_SAMPLE_RATE   8000   // must match the rate notes_data.h was generated at
-#define I2S_DMA_BUF_COUNT 8
-#define I2S_DMA_BUF_LEN   256    // sample-frames per DMA buffer (256 stereo 16-bit frames = 1KB/buffer)
+#define SAMPLE_RATE 8000
+#define SAMPLE_PERIOD_US (1000000 / SAMPLE_RATE)  // 125 µs
 
 uint8_t lastMask = 0x00;
 unsigned long lastRxMs = 0;
 const unsigned long LINK_TIMEOUT_MS = 1000;
 
-// Per-beam playback state: is this beam's note currently sounding, and how
-// far into its own sample data has it played. Independent per beam, which
-// is what makes overlap/mixing possible - beam 0 can be partway through
-// its note while beam 3 just started, and both get summed together below.
-bool beamActive[NUM_BEAMS] = {false, false, false, false, false, false, false};
-uint32_t notePos[NUM_BEAMS] = {0, 0, 0, 0, 0, 0, 0};
+// Per-beam playback state
+volatile bool beamActive[NUM_BEAMS] = {false};
+volatile uint32_t notePos[NUM_BEAMS] = {0};
 
-static void i2sInit() {
-  i2s_config_t i2s_config = {
-    .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_TX | I2S_MODE_DAC_BUILT_IN),
-    .sample_rate = I2S_SAMPLE_RATE,
-    .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
-    .channel_format = I2S_CHANNEL_FMT_RIGHT_LEFT,
-    .communication_format = (i2s_comm_format_t)(I2S_COMM_FORMAT_STAND_MSB),
-    .intr_alloc_flags = 0,
-    .dma_buf_count = I2S_DMA_BUF_COUNT,
-    .dma_buf_len = I2S_DMA_BUF_LEN,
-    .use_apll = false,
-    .tx_desc_auto_clear = true,
-    .fixed_mclk = 0
-  };
+// Audio output task running on Core 1
+void audioTask(void *param) {
+  // Enable DAC output on channel 1 (GPIO25)
+  dac_output_enable(DAC_CHANNEL_1);
 
-  i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
-  i2s_set_pin(I2S_NUM_0, NULL);                    // NULL pin config -> route to the internal DAC, not external I2S pins
-  i2s_set_dac_mode(I2S_DAC_CHANNEL_BOTH_EN);        // both GPIO25 and GPIO26 carry the same mixed signal
-  i2s_zero_dma_buffer(I2S_NUM_0);
-}
+  while (true) {
+    unsigned long t0 = micros();
 
-// Mixes every currently-active beam's note together for `frames` sample
-// steps and pushes the result to the DAC. Blocks briefly if the DMA
-// buffer is full - that's normal and is what paces this to real playback
-// speed, so calling this once per loop() iteration is enough; nothing
-// else in loop() is slow enough to starve it.
-static void fillAudio(int frames) {
-  static uint16_t buf[I2S_DMA_BUF_LEN * 2];   // interleaved L/R, 16-bit words
-
-  for (int i = 0; i < frames; i++) {
     int32_t mixSum = 0;
     uint8_t activeCount = 0;
 
@@ -103,46 +45,89 @@ static void fillAudio(int frames) {
 
       const NoteSample &note = NOTE_TABLE[b];
       if (notePos[b] >= note.len) {
-        beamActive[b] = false;      // this note reached its own natural end
+        beamActive[b] = false;
         continue;
       }
 
-      // Samples are stored unsigned (0-255, silence = 128) - shift to
-      // signed for the addition, then we'll shift back afterward.
       int16_t sample = (int16_t)note.data[notePos[b]] - 128;
       mixSum += sample;
       activeCount++;
       notePos[b]++;
     }
 
-    int16_t mixed = 0;
+    uint8_t outVal;
     if (activeCount > 0) {
-      // Average instead of a raw sum - keeps several overlapping notes
-      // from adding up past what the DAC can represent (clipping/crackle).
-      mixed = (int16_t)(mixSum / activeCount);
+      int16_t mixed = (int16_t)(mixSum / activeCount);
+      outVal = (uint8_t)(mixed + 128);
+    } else {
+      outVal = 128;
     }
 
-    uint8_t out8 = (uint8_t)(mixed + 128);
-    // The built-in DAC reads the TOP 8 bits of each 16-bit I2S word - this
-    // left-shift is what actually gets the sample value to the DAC.
-    uint16_t out16 = ((uint16_t)out8) << 8;
+    // Direct DAC write - fast, no Arduino overhead
+    dac_output_voltage(DAC_CHANNEL_1, outVal);
 
-    buf[i * 2]     = out16;   // left  (GPIO26)
-    buf[i * 2 + 1] = out16;   // right (GPIO25) - identical, so either pin works
+    // Maintain precise 8000 Hz sample rate
+    unsigned long elapsed = micros() - t0;
+    if (elapsed < SAMPLE_PERIOD_US) {
+      delayMicroseconds(SAMPLE_PERIOD_US - elapsed);
+    }
   }
-
-  size_t bytesWritten = 0;
-  i2s_write(I2S_NUM_0, buf, frames * 2 * sizeof(uint16_t), &bytesWritten, portMAX_DELAY);
 }
 
 void setup() {
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, ATMEGA_RX_PIN, ATMEGA_TX_PIN);
 
-  i2sInit();
+  Serial.println("=== ESP32 Laser Harp Audio Engine ===");
+
+  // ---------- HARDWARE TEST: Generate a loud 440Hz sine wave ----------
+  // This proves GPIO25 -> amp -> speaker path works independently of
+  // any note data or beam logic.
+  Serial.println("TEST: Playing 440Hz sine wave on GPIO25 for 1 second...");
+  dac_output_enable(DAC_CHANNEL_1);
+
+  for (int i = 0; i < SAMPLE_RATE; i++) {  // 1 second of audio
+    // 440 Hz sine wave, full amplitude (0-255)
+    float angle = 2.0f * 3.14159f * 440.0f * i / SAMPLE_RATE;
+    uint8_t val = (uint8_t)(128 + 127 * sin(angle));
+    dac_output_voltage(DAC_CHANNEL_1, val);
+    delayMicroseconds(SAMPLE_PERIOD_US);
+  }
+  dac_output_voltage(DAC_CHANNEL_1, 128);  // silence
+  Serial.println("TEST: Sine wave done. Did you hear a tone?");
+
+  // ---------- Now test with actual note C4 data ----------
+  Serial.println("TEST: Playing noteC4 from flash for 1 second...");
+  uint32_t samplesToPlay = min((uint32_t)SAMPLE_RATE, noteC4Len);
+  for (uint32_t i = 0; i < samplesToPlay; i++) {
+    dac_output_voltage(DAC_CHANNEL_1, noteC4[i]);
+    delayMicroseconds(SAMPLE_PERIOD_US);
+  }
+  dac_output_voltage(DAC_CHANNEL_1, 128);
+  Serial.println("TEST: Note C4 done. Did you hear it?");
+
+  // ---------- Start the audio task on Core 1 ----------
+  xTaskCreatePinnedToCore(
+    audioTask,    // function
+    "audio",      // name
+    4096,         // stack size
+    NULL,         // parameter
+    5,            // priority (high)
+    NULL,         // task handle
+    1             // run on Core 1 (loop() runs on Core 0)
+  );
 
   lastRxMs = millis();
-  Serial.println("Ready - ESP32 self-mixing audio engine (no DFPlayer). Waiting for ATmega32 beam data on Serial2 (9600 baud).");
+  Serial.println("Ready - 7-beam polyphonic DAC mixer on GPIO25.");
+  Serial.println("Waiting for ATmega32 beam data on Serial2 (9600 baud).");
+}
+
+uint8_t countActive() {
+  uint8_t count = 0;
+  for (uint8_t b = 0; b < NUM_BEAMS; b++) {
+    if (beamActive[b]) count++;
+  }
+  return count;
 }
 
 void loop() {
@@ -154,23 +139,18 @@ void loop() {
     for (uint8_t beam = 0; beam < NUM_BEAMS; beam++) {
       const uint8_t bit = (uint8_t)(1 << beam);
       if ((changed & bit) && (mask & bit)) {
-        // beam just got blocked -> (re)start this note from the beginning.
-        // Other beams' notes, if active, are untouched and keep mixing in.
+        Serial.printf("Beam %u blocked -> note ON (mixing with %u other active)\n",
+                       beam, countActive());
         notePos[beam] = 0;
         beamActive[beam] = true;
-        Serial.printf("Beam %u blocked -> note %u starts (mixing with whatever else is active)\n", beam, beam);
       }
-      // No action on release yet - see the NOT YET IMPLEMENTED note above.
     }
     lastMask = mask;
   }
 
-  // Keep the DAC continuously fed. This call paces itself (blocks briefly
-  // if the DMA buffer's still full from the last chunk), so this alone is
-  // enough to keep steady playback without a separate timer or task.
-  fillAudio(I2S_DMA_BUF_LEN);
-
   if (millis() - lastRxMs > LINK_TIMEOUT_MS) {
-    // dead-link hook, if ever needed
+    // dead-link hook
   }
+
+  delay(1);  // yield to other tasks
 }
