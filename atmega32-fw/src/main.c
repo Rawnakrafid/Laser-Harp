@@ -6,27 +6,15 @@
 /* ------------------------------------------------------------------
  * Laser Harp - ATmega32 beam detection + UART link to ESP32
  *
- * Two-mode version: a physical switch picks between
- *   MANUAL - real beam sensors, live playing (this is the existing
- *            single-beam detection logic, unchanged)
- *   AUTO   - ignores the sensors and sends a canned demo sequence
- *            instead, useful for testing the ESP32 + speaker chain
- *            before all the physical beams are wired up
+ * Phase: single beam (beam 0, PA0/ADC0) proven end-to-end before
+ * scaling to all 8. Sends a 1-byte state mask to the ESP32 on PD1
+ * (TXD) any time a beam's state changes, plus a periodic heartbeat
+ * so the ESP32 can tell "all clear" from "link dead".
  *
- * MODE SWITCH WIRING: one leg to PD2, the other to GND. Open (pin
- * reads HIGH via the internal pull-up) = MANUAL. Closed to GND (pin
- * reads LOW) = AUTO. PD2 is free - PD0/PD1 are the UART to the ESP32.
- *
- * The AUTO demo pattern below is an original one I made up for this
- * test (a scan up and down the 7 beams, three arpeggiated chords,
- * then all beams together) - not any existing song. It's just a
- * wiring/pipeline check; swap DEMO_SEQUENCE for whatever you want
- * once you're driving this from something else.
- *
- * Bit i of the mask sent over UART = 1 means beam i is "blocked".
+ * Bit i of the mask = 1 means beam i is currently blocked.
  * ------------------------------------------------------------------ */
 
-#define NUM_ACTIVE_BEAMS      1     /* raise to 8 once beam 0 is proven - unchanged, only affects MANUAL mode */
+#define NUM_ACTIVE_BEAMS      1     /* raise to 8 once beam 0 is proven */
 #define CALIBRATION_SAMPLES  50     /* boot-time baseline average, beams assumed clear */
 #define CONFIRM_SAMPLES       5     /* consecutive samples required before flipping state */
 #define TRIGGER_NUM            6    /* trigger below baseline * 6/10 */
@@ -34,29 +22,6 @@
 #define RELEASE_NUM             8   /* release above baseline * 8/10 */
 #define RELEASE_DEN            10
 #define HEARTBEAT_LOOPS       200   /* ~200ms at the 1ms loop delay below */
-
-#define MODE_SWITCH_PIN  PD2
-
-typedef struct {
-    uint8_t  mask;
-    uint16_t durationMs;
-} SequenceStep;
-
-/* Original demo pattern - not any existing song: scan up the 7 beams,
- * scan back down, three arpeggiated chords, then all 7 beams together. */
-static const SequenceStep DEMO_SEQUENCE[] = {
-    {0x01, 200}, {0x02, 200}, {0x04, 200}, {0x08, 200},
-    {0x10, 200}, {0x20, 200}, {0x40, 200},
-    {0x20, 200}, {0x10, 200}, {0x08, 200}, {0x04, 200}, {0x02, 200}, {0x01, 200},
-    {0x00, 200},
-    {0x15, 400},   /* beams 0+2+4 */
-    {0x2A, 400},   /* beams 1+3+5 */
-    {0x49, 600},   /* beams 0+3+6 */
-    {0x00, 300},
-    {0x7F, 500},   /* all 7 beams together */
-    {0x00, 500},
-};
-#define DEMO_SEQUENCE_LEN (sizeof(DEMO_SEQUENCE) / sizeof(DEMO_SEQUENCE[0]))
 
 static void adc_init(void)
 {
@@ -88,39 +53,6 @@ static void uart_send(uint8_t data)
     UDR = data;
 }
 
-static void mode_switch_init(void)
-{
-    DDRD  &= (uint8_t)~(1 << MODE_SWITCH_PIN);   /* input */
-    PORTD |= (uint8_t)(1 << MODE_SWITCH_PIN);    /* internal pull-up */
-}
-
-static uint8_t is_auto_mode(void)
-{
-    return (PIND & (1 << MODE_SWITCH_PIN)) == 0;   /* LOW (switched to GND) = AUTO */
-}
-
-/* _delay_ms() needs a compile-time constant, so step through it in
- * small fixed chunks for a runtime-variable delay. */
-static void delay_ms_var(uint16_t ms)
-{
-    while (ms--) {
-        _delay_ms(1);
-    }
-}
-
-static void run_auto_demo(void)
-{
-    for (uint8_t i = 0; i < DEMO_SEQUENCE_LEN; i++) {
-        if (!is_auto_mode()) {
-            uart_send(0x00);   /* switch flipped mid-sequence - clear and drop back to manual immediately */
-            return;
-        }
-        uart_send(DEMO_SEQUENCE[i].mask);
-        delay_ms_var(DEMO_SEQUENCE[i].durationMs);
-    }
-    uart_send(0x00);   /* always end a full pass on all-clear */
-}
-
 int main(void)
 {
     DDRB |= (1 << PB0);            /* beam-0 indicator LED */
@@ -135,7 +67,6 @@ int main(void)
 
     adc_init();
     uart_init();
-    mode_switch_init();
 
     /* Baseline calibration */
     uint32_t sum = 0;
@@ -159,13 +90,6 @@ int main(void)
     uint16_t heartbeat_ticks = 0;
 
     while (1) {
-        if (is_auto_mode()) {
-            run_auto_demo();
-            last_mask = 0x00;   /* so MANUAL resumes cleanly if the switch flips back */
-            continue;
-        }
-
-        /* MANUAL mode: identical beam-detect logic to the original firmware */
         const uint16_t sample = adc_read(0);
 
         if (!blocked && sample < trigger_thresh) {
