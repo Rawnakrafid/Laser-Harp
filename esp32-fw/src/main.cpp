@@ -1,43 +1,96 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
+#include "notes_data.h"
+#include "string2/notes_data_string2.h"
 
 /* ------------------------------------------------------------------
- * TEMPORARY DIAGNOSTIC BUILD - NOT the real polyphony firmware.
+ * ESP32 audio engine - two-mode version.
  *
- * Purpose: rule out "the note sample data / mixing math is somehow too
- * quiet or broken" as the reason for no sound, by replacing it with the
- * simplest possible thing that should be unmistakably audible: a plain
- * square-wave beep tone, full amplitude, playing for as long as ANY
- * beam is blocked, silent when none are.
+ * A push button (BUTTON_PIN) toggles between two note libraries:
+ *   mode 0 - the 7 piano chords     (notes_data.h        / NOTE_TABLE)
+ *   mode 1 - the 7 metallic notes   (notes_data_string2.h / NOTE_TABLE_STRING2)
+ * 14 notes total, 7 per mode, same beam -> index mapping either way.
+ * This is exactly why those two headers were built with different
+ * struct/array names (NoteSample/NOTE_TABLE vs NoteSample2/
+ * NOTE_TABLE_STRING2) - so both can be #included here with zero
+ * symbol collisions.
  *
- * If you hear this beep through the amp+speaker: the whole chain (ESP32
- * DAC -> amp -> speaker) is proven working end-to-end, and the real bug
- * is specifically in the sample data or mixing code in the real
- * main.cpp - go back to that with confidence it's a content problem,
- * not a wiring/power/amp problem.
+ * Still single-note (no mixing/overlap), same as the current
+ * diagnostic build: whichever beam you just blocked plays its sample
+ * from the CURRENTLY SELECTED table, replacing whatever was playing.
  *
- * If you DON'T hear this beep either: the problem is NOT the audio
- * content - it's still somewhere in amp power / ground / volume pot /
- * output wiring, exactly what we were checking before this test.
- *
- * DO NOT commit this file. Once you're done testing, restore the real
- * version with:
- *     git checkout -- src/main.cpp
- * (safe to do - the real polyphony version is already committed).
+ * BUTTON WIRING: one leg to BUTTON_PIN, the other leg to GND. Uses
+ * the ESP32's internal pull-up, so no external resistor is needed.
+ * Pick a free GPIO for BUTTON_PIN - GPIO25/26 are already used
+ * internally by the I2S built-in DAC, and 16/17 are the ATmega link,
+ * so don't reuse those. GPIO4 is a safe default on most dev boards;
+ * change it if that pin is already spoken for on your wiring.
  * ------------------------------------------------------------------ */
 
 #define ATMEGA_RX_PIN 16
 #define ATMEGA_TX_PIN 17
+#define NUM_BEAMS 7
+
+#define BUTTON_PIN   4
+#define DEBOUNCE_MS  30
 
 #define I2S_SAMPLE_RATE   8000
 #define I2S_DMA_BUF_COUNT 8
 #define I2S_DMA_BUF_LEN   256
 
-#define TONE_HZ           500     // plain audible beep frequency
-#define TONE_HALF_PERIOD  (I2S_SAMPLE_RATE / TONE_HZ / 2)   // samples per half-cycle
-
 uint8_t lastMask = 0x00;
-volatile bool toneOn = false;
+
+int8_t   currentNote = -1;   // -1 = nothing playing
+uint32_t currentPos  = 0;
+
+uint8_t stringType = 0;      // 0 = piano chords, 1 = metallic set
+
+// button debounce state
+int lastButtonReading   = HIGH;
+int stableButtonState   = HIGH;
+unsigned long lastDebounceTime = 0;
+
+static void buttonInit() {
+  pinMode(BUTTON_PIN, INPUT_PULLUP);   // button to GND; pin reads LOW when pressed
+}
+
+// Returns true exactly once per confirmed press (debounced HIGH -> LOW edge).
+static bool buttonPressedEdge() {
+  int reading = digitalRead(BUTTON_PIN);
+
+  if (reading != lastButtonReading) {
+    lastDebounceTime = millis();
+  }
+
+  bool pressedEdge = false;
+  if ((millis() - lastDebounceTime) > DEBOUNCE_MS) {
+    if (reading != stableButtonState) {
+      stableButtonState = reading;
+      if (stableButtonState == LOW) {
+        pressedEdge = true;
+      }
+    }
+  }
+
+  lastButtonReading = reading;
+  return pressedEdge;
+}
+
+// Fetches the sample data pointer/length for a given beam under the
+// currently selected mode. The two tables use differently-named
+// struct types (NoteSample vs NoteSample2) but the same shape, so
+// this just branches on which one to read from.
+static void getNoteForBeam(uint8_t beam, const uint8_t* &data, uint32_t &len) {
+  if (stringType == 0) {
+    const NoteSample &note = NOTE_TABLE[beam];
+    data = note.data;
+    len  = note.len;
+  } else {
+    const NoteSample2 &note = NOTE_TABLE_STRING2[beam];
+    data = note.data;
+    len  = note.len;
+  }
+}
 
 static void i2sInit() {
   i2s_config_t i2s_config = {
@@ -59,22 +112,23 @@ static void i2sInit() {
   i2s_zero_dma_buffer(I2S_NUM_0);
 }
 
-// Full-amplitude square wave (as loud as this DAC can go) while toneOn,
-// dead silence (mid-scale) otherwise. No sample data, no mixing, no
-// averaging - the simplest possible test signal.
 static void fillAudio(int frames) {
   static uint16_t buf[I2S_DMA_BUF_LEN * 2];
-  static uint32_t phase = 0;
 
   for (int i = 0; i < frames; i++) {
     uint8_t out8 = 128;   // silence
 
-    if (toneOn) {
-      const bool highHalf = (phase / TONE_HALF_PERIOD) % 2 == 0;
-      out8 = highHalf ? 255 : 0;   // full swing, as loud as the DAC gets
-      phase++;
-    } else {
-      phase = 0;   // reset so the tone always starts clean, no click from a stale phase
+    if (currentNote >= 0) {
+      const uint8_t* data;
+      uint32_t len;
+      getNoteForBeam((uint8_t)currentNote, data, len);
+
+      if (currentPos < len) {
+        out8 = data[currentPos];
+        currentPos++;
+      } else {
+        currentNote = -1;   // note finished naturally
+      }
     }
 
     uint16_t out16 = ((uint16_t)out8) << 8;
@@ -89,18 +143,31 @@ static void fillAudio(int frames) {
 void setup() {
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, ATMEGA_RX_PIN, ATMEGA_TX_PIN);
+  buttonInit();
   i2sInit();
-  Serial.println("DIAGNOSTIC BUILD: plain beep test. Block any beam to hear a 500Hz tone.");
+  Serial.println("Two-mode build ready: button toggles chord set / metallic set.");
+  Serial.println("Mode 0 (piano chords) active. Block a beam to hear its note.");
 }
 
 void loop() {
+  if (buttonPressedEdge()) {
+    stringType = stringType ? 0 : 1;
+    currentNote = -1;   // stop whatever was ringing so the switch is clean
+    Serial.printf("Switched to mode %u (%s)\n", stringType, stringType == 0 ? "piano chords" : "metallic set");
+  }
+
   if (Serial2.available()) {
     const uint8_t mask = Serial2.read();
-    if (mask != lastMask) {
-      toneOn = (mask != 0);
-      Serial.printf("mask=0x%02X -> tone %s\n", mask, toneOn ? "ON" : "off");
-      lastMask = mask;
+    const uint8_t changed = mask ^ lastMask;
+    for (uint8_t beam = 0; beam < NUM_BEAMS; beam++) {
+      const uint8_t bit = (uint8_t)(1 << beam);
+      if ((changed & bit) && (mask & bit)) {
+        currentNote = beam;
+        currentPos  = 0;
+        Serial.printf("beam %u -> note %u (mode %u)\n", beam, beam, stringType);
+      }
     }
+    lastMask = mask;
   }
   fillAudio(I2S_DMA_BUF_LEN);
 }

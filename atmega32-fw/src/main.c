@@ -6,39 +6,57 @@
 /* ------------------------------------------------------------------
  * Laser Harp - ATmega32 beam detection + UART link to ESP32
  *
- * All 7 beams (PA0-PA6 / ADC0-6), one per note (C4..B4). Bit i of the
- * UART mask = 1 means beam i is currently blocked. Sent on any change,
- * plus a periodic heartbeat so the ESP32 can tell "all clear" from
- * "link dead".
+ * Two-mode version: a physical switch picks between
+ *   MANUAL - real beam sensors, live playing (this is the existing
+ *            single-beam detection logic, unchanged)
+ *   AUTO   - ignores the sensors and sends a canned demo sequence
+ *            instead, useful for testing the ESP32 + speaker chain
+ *            before all the physical beams are wired up
+ *
+ * MODE SWITCH WIRING: one leg to PD2, the other to GND. Open (pin
+ * reads HIGH via the internal pull-up) = MANUAL. Closed to GND (pin
+ * reads LOW) = AUTO. PD2 is free - PD0/PD1 are the UART to the ESP32.
+ *
+ * The AUTO demo pattern below is an original one I made up for this
+ * test (a scan up and down the 7 beams, three arpeggiated chords,
+ * then all beams together) - not any existing song. It's just a
+ * wiring/pipeline check; swap DEMO_SEQUENCE for whatever you want
+ * once you're driving this from something else.
+ *
+ * Bit i of the mask sent over UART = 1 means beam i is "blocked".
  * ------------------------------------------------------------------ */
 
-#define NUM_BEAMS              7    /* 7 active beams (PA0-PA6) */
-#define CALIBRATION_SAMPLES   50    /* boot-time baseline average per beam, beams assumed clear */
-#define CONFIRM_SAMPLES       15    /* 15 consecutive samples: completely eliminates optical flicker */
-#define TRIGGER_NUM              5  /* trigger below baseline * 5/10 (50%) */
-#define TRIGGER_DEN             10
-#define RELEASE_NUM              8  /* release above baseline * 8/10 (80%) */
-#define RELEASE_DEN             10
-#define HEARTBEAT_LOOPS        200  /* ~200ms at the ~1ms sweep delay below */
-#define BASELINE_EMA_SHIFT      6   /* ongoing drift correction: new = old + (sample-old)/64, only while stably clear */
-#define BASELINE_FALLBACK      600  /* used if a channel calibrates suspiciously dark (laser unaligned/blocked at boot) */
-#define BASELINE_MIN_VALID     200
+#define NUM_ACTIVE_BEAMS      1     /* raise to 8 once beam 0 is proven - unchanged, only affects MANUAL mode */
+#define CALIBRATION_SAMPLES  50     /* boot-time baseline average, beams assumed clear */
+#define CONFIRM_SAMPLES       5     /* consecutive samples required before flipping state */
+#define TRIGGER_NUM            6    /* trigger below baseline * 6/10 */
+#define TRIGGER_DEN            10
+#define RELEASE_NUM             8   /* release above baseline * 8/10 */
+#define RELEASE_DEN            10
+#define HEARTBEAT_LOOPS       200   /* ~200ms at the 1ms loop delay below */
+
+#define MODE_SWITCH_PIN  PD2
 
 typedef struct {
-    uint16_t baseline;
-    uint16_t trigger_thresh;
-    uint16_t release_thresh;
-    uint8_t  blocked;
-    uint8_t  confirm_count;
-} beam_state_t;
+    uint8_t  mask;
+    uint16_t durationMs;
+} SequenceStep;
 
-static beam_state_t beams[NUM_BEAMS];
-
-static void recompute_thresholds(beam_state_t *b)
-{
-    b->trigger_thresh = (uint16_t)((uint32_t)b->baseline * TRIGGER_NUM / TRIGGER_DEN);
-    b->release_thresh = (uint16_t)((uint32_t)b->baseline * RELEASE_NUM / RELEASE_DEN);
-}
+/* Original demo pattern - not any existing song: scan up the 7 beams,
+ * scan back down, three arpeggiated chords, then all 7 beams together. */
+static const SequenceStep DEMO_SEQUENCE[] = {
+    {0x01, 200}, {0x02, 200}, {0x04, 200}, {0x08, 200},
+    {0x10, 200}, {0x20, 200}, {0x40, 200},
+    {0x20, 200}, {0x10, 200}, {0x08, 200}, {0x04, 200}, {0x02, 200}, {0x01, 200},
+    {0x00, 200},
+    {0x15, 400},   /* beams 0+2+4 */
+    {0x2A, 400},   /* beams 1+3+5 */
+    {0x49, 600},   /* beams 0+3+6 */
+    {0x00, 300},
+    {0x7F, 500},   /* all 7 beams together */
+    {0x00, 500},
+};
+#define DEMO_SEQUENCE_LEN (sizeof(DEMO_SEQUENCE) / sizeof(DEMO_SEQUENCE[0]))
 
 static void adc_init(void)
 {
@@ -70,95 +88,114 @@ static void uart_send(uint8_t data)
     UDR = data;
 }
 
+static void mode_switch_init(void)
+{
+    DDRD  &= (uint8_t)~(1 << MODE_SWITCH_PIN);   /* input */
+    PORTD |= (uint8_t)(1 << MODE_SWITCH_PIN);    /* internal pull-up */
+}
+
+static uint8_t is_auto_mode(void)
+{
+    return (PIND & (1 << MODE_SWITCH_PIN)) == 0;   /* LOW (switched to GND) = AUTO */
+}
+
+/* _delay_ms() needs a compile-time constant, so step through it in
+ * small fixed chunks for a runtime-variable delay. */
+static void delay_ms_var(uint16_t ms)
+{
+    while (ms--) {
+        _delay_ms(1);
+    }
+}
+
+static void run_auto_demo(void)
+{
+    for (uint8_t i = 0; i < DEMO_SEQUENCE_LEN; i++) {
+        if (!is_auto_mode()) {
+            uart_send(0x00);   /* switch flipped mid-sequence - clear and drop back to manual immediately */
+            return;
+        }
+        uart_send(DEMO_SEQUENCE[i].mask);
+        delay_ms_var(DEMO_SEQUENCE[i].durationMs);
+    }
+    uart_send(0x00);   /* always end a full pass on all-clear */
+}
+
 int main(void)
 {
-    DDRB = 0x7F;   /* PB0-PB6 as outputs: one indicator LED per beam */
+    DDRB |= (1 << PB0);            /* beam-0 indicator LED */
 
-    /* Visual 3-blink startup indicator on all indicator LEDs - also doubles as a
-     * ~600ms power-rail settle window before calibration starts, which matters
-     * most right after a brownout reset (e.g. from the DFPlayer's amp current
-     * spike), where the rail can still be recovering for the first tens of ms.
-     * Calibrating off a transient reading here is exactly how a beam went
-     * "dead" before. */
+    /* Quick startup blink test: 3 blinks to confirm startup */
     for (uint8_t i = 0; i < 3; i++) {
-        PORTB = 0x7F;
+        PORTB |= (1 << PB0);
         _delay_ms(100);
-        PORTB = 0x00;
+        PORTB &= (uint8_t)~(1 << PB0);
         _delay_ms(100);
     }
 
     adc_init();
     uart_init();
+    mode_switch_init();
 
-    /* Baseline calibration: assume all beams are clear at boot */
-    for (uint8_t ch = 0; ch < NUM_BEAMS; ch++) {
-        uint32_t sum = 0;
-        for (uint8_t i = 0; i < CALIBRATION_SAMPLES; i++) {
-            sum += adc_read(ch);
-            _delay_ms(2);
-        }
-        uint16_t baseline = (uint16_t)(sum / CALIBRATION_SAMPLES);
-        if (baseline < BASELINE_MIN_VALID) {
-            baseline = BASELINE_FALLBACK; /* safe fallback if laser is unaligned/blocked at boot */
-        }
-        beams[ch].baseline       = baseline;
-        beams[ch].blocked        = 0;
-        beams[ch].confirm_count  = 0;
-        recompute_thresholds(&beams[ch]);
+    /* Baseline calibration */
+    uint32_t sum = 0;
+    for (uint8_t i = 0; i < CALIBRATION_SAMPLES; i++) {
+        sum += adc_read(0);
+        _delay_ms(2);
+    }
+    uint16_t baseline = (uint16_t)(sum / CALIBRATION_SAMPLES);
+
+    /* Fallback protection */
+    if (baseline < 200) {
+        baseline = 600;
     }
 
+    const uint16_t trigger_thresh  = (uint16_t)((uint32_t)baseline * TRIGGER_NUM / TRIGGER_DEN);
+    const uint16_t release_thresh  = (uint16_t)((uint32_t)baseline * RELEASE_NUM / RELEASE_DEN);
+
+    uint8_t  blocked         = 0;
+    uint8_t  confirm_count   = 0;
     uint8_t  last_mask       = 0x00;
     uint16_t heartbeat_ticks = 0;
 
     while (1) {
-        uint8_t mask = 0x00;
-
-        for (uint8_t ch = 0; ch < NUM_BEAMS; ch++) {
-            const uint16_t sample = adc_read(ch);
-            beam_state_t *b = &beams[ch];
-
-            if (!b->blocked && sample < b->trigger_thresh) {
-                if (++b->confirm_count >= CONFIRM_SAMPLES) {
-                    b->blocked = 1;
-                    b->confirm_count = 0;
-                }
-            } else if (b->blocked && sample > b->release_thresh) {
-                if (++b->confirm_count >= CONFIRM_SAMPLES) {
-                    b->blocked = 0;
-                    b->confirm_count = 0;
-                }
-            } else {
-                b->confirm_count = 0;
-            }
-
-            /* Slow baseline drift correction: only while stably clear (not
-             * blocked, not mid-debounce), nudge the baseline toward the
-             * current reading and recompute thresholds. This is what makes a
-             * bad calibration (ambient light drift over a session, or a reset
-             * that happened while a beam was shadowed but still above the
-             * <200 fallback cutoff) self-heal within a couple seconds the
-             * next time that beam is clear, instead of staying wrong until
-             * the whole board is power-cycled again. */
-            if (!b->blocked && b->confirm_count == 0) {
-                const int32_t diff = (int32_t)sample - (int32_t)b->baseline;
-                b->baseline = (uint16_t)((int32_t)b->baseline + (diff >> BASELINE_EMA_SHIFT));
-                recompute_thresholds(b);
-            }
-
-            if (b->blocked) {
-                PORTB |= (uint8_t)(1 << ch);
-                mask   |= (uint8_t)(1 << ch);
-            } else {
-                PORTB &= (uint8_t)~(1 << ch);
-            }
+        if (is_auto_mode()) {
+            run_auto_demo();
+            last_mask = 0x00;   /* so MANUAL resumes cleanly if the switch flips back */
+            continue;
         }
+
+        /* MANUAL mode: identical beam-detect logic to the original firmware */
+        const uint16_t sample = adc_read(0);
+
+        if (!blocked && sample < trigger_thresh) {
+            if (++confirm_count >= CONFIRM_SAMPLES) {
+                blocked = 1;
+                confirm_count = 0;
+            }
+        } else if (blocked && sample > release_thresh) {
+            if (++confirm_count >= CONFIRM_SAMPLES) {
+                blocked = 0;
+                confirm_count = 0;
+            }
+        } else {
+            confirm_count = 0;
+        }
+
+        if (blocked) {
+            PORTB |= (1 << PB0);
+        } else {
+            PORTB &= (uint8_t)~(1 << PB0);
+        }
+
+        const uint8_t mask = blocked ? 0x01 : 0x00;
 
         if (mask != last_mask) {
             uart_send(mask);
             last_mask = mask;
             heartbeat_ticks = 0;
         } else if (++heartbeat_ticks >= HEARTBEAT_LOOPS) {
-            uart_send(mask);           /* heartbeat: link-alive signal even with no change */
+            uart_send(mask);           /* heartbeat */
             heartbeat_ticks = 0;
         }
 
