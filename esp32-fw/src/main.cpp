@@ -1,38 +1,14 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
-#include "notes_data.h"
 #include "string2/notes_data_string2.h"
 
-/* ------------------------------------------------------------------
- * ESP32 audio engine - two-mode version.
- *
- * A push button (BUTTON_PIN) toggles between two note libraries:
- *   mode 0 - the 7 piano chords     (notes_data.h        / NOTE_TABLE)
- *   mode 1 - the 7 metallic notes   (notes_data_string2.h / NOTE_TABLE_STRING2)
- * 14 notes total, 7 per mode, same beam -> index mapping either way.
- * This is exactly why those two headers were built with different
- * struct/array names (NoteSample/NOTE_TABLE vs NoteSample2/
- * NOTE_TABLE_STRING2) - so both can be #included here with zero
- * symbol collisions.
- *
- * Still single-note (no mixing/overlap), same as the current
- * diagnostic build: whichever beam you just blocked plays its sample
- * from the CURRENTLY SELECTED table, replacing whatever was playing.
- *
- * BUTTON WIRING: one leg to BUTTON_PIN, the other leg to GND. Uses
- * the ESP32's internal pull-up, so no external resistor is needed.
- * Pick a free GPIO for BUTTON_PIN - GPIO25/26 are already used
- * internally by the I2S built-in DAC, and 16/17 are the ATmega link,
- * so don't reuse those. GPIO4 is a safe default on most dev boards;
- * change it if that pin is already spoken for on your wiring.
- * ------------------------------------------------------------------ */
+/* Single-note version: no mixing, no overlap. Whichever beam you just
+ * blocked plays its own sample from notes_data_string2.h (the metallic
+ * "string type 2" set), replacing whatever was playing before. */
 
 #define ATMEGA_RX_PIN 16
 #define ATMEGA_TX_PIN 17
 #define NUM_BEAMS 7
-
-#define BUTTON_PIN   4
-#define DEBOUNCE_MS  30
 
 #define I2S_SAMPLE_RATE   8000
 #define I2S_DMA_BUF_COUNT 8
@@ -42,55 +18,6 @@ uint8_t lastMask = 0x00;
 
 int8_t   currentNote = -1;   // -1 = nothing playing
 uint32_t currentPos  = 0;
-
-uint8_t stringType = 0;      // 0 = piano chords, 1 = metallic set
-
-// button debounce state
-int lastButtonReading   = HIGH;
-int stableButtonState   = HIGH;
-unsigned long lastDebounceTime = 0;
-
-static void buttonInit() {
-  pinMode(BUTTON_PIN, INPUT_PULLUP);   // button to GND; pin reads LOW when pressed
-}
-
-// Returns true exactly once per confirmed press (debounced HIGH -> LOW edge).
-static bool buttonPressedEdge() {
-  int reading = digitalRead(BUTTON_PIN);
-
-  if (reading != lastButtonReading) {
-    lastDebounceTime = millis();
-  }
-
-  bool pressedEdge = false;
-  if ((millis() - lastDebounceTime) > DEBOUNCE_MS) {
-    if (reading != stableButtonState) {
-      stableButtonState = reading;
-      if (stableButtonState == LOW) {
-        pressedEdge = true;
-      }
-    }
-  }
-
-  lastButtonReading = reading;
-  return pressedEdge;
-}
-
-// Fetches the sample data pointer/length for a given beam under the
-// currently selected mode. The two tables use differently-named
-// struct types (NoteSample vs NoteSample2) but the same shape, so
-// this just branches on which one to read from.
-static void getNoteForBeam(uint8_t beam, const uint8_t* &data, uint32_t &len) {
-  if (stringType == 0) {
-    const NoteSample &note = NOTE_TABLE[beam];
-    data = note.data;
-    len  = note.len;
-  } else {
-    const NoteSample2 &note = NOTE_TABLE_STRING2[beam];
-    data = note.data;
-    len  = note.len;
-  }
-}
 
 static void i2sInit() {
   i2s_config_t i2s_config = {
@@ -119,12 +46,9 @@ static void fillAudio(int frames) {
     uint8_t out8 = 128;   // silence
 
     if (currentNote >= 0) {
-      const uint8_t* data;
-      uint32_t len;
-      getNoteForBeam((uint8_t)currentNote, data, len);
-
-      if (currentPos < len) {
-        out8 = data[currentPos];
+      const NoteSample2 &note = NOTE_TABLE_STRING2[currentNote];
+      if (currentPos < note.len) {
+        out8 = note.data[currentPos];
         currentPos++;
       } else {
         currentNote = -1;   // note finished naturally
@@ -143,19 +67,11 @@ static void fillAudio(int frames) {
 void setup() {
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, ATMEGA_RX_PIN, ATMEGA_TX_PIN);
-  buttonInit();
   i2sInit();
-  Serial.println("Two-mode build ready: button toggles chord set / metallic set.");
-  Serial.println("Mode 0 (piano chords) active. Block a beam to hear its note.");
+  Serial.println("String2 (metallic set) test build: block any beam to hear its note (no mixing).");
 }
 
 void loop() {
-  if (buttonPressedEdge()) {
-    stringType = stringType ? 0 : 1;
-    currentNote = -1;   // stop whatever was ringing so the switch is clean
-    Serial.printf("Switched to mode %u (%s)\n", stringType, stringType == 0 ? "piano chords" : "metallic set");
-  }
-
   if (Serial2.available()) {
     const uint8_t mask = Serial2.read();
     const uint8_t changed = mask ^ lastMask;
@@ -164,7 +80,7 @@ void loop() {
       if ((changed & bit) && (mask & bit)) {
         currentNote = beam;
         currentPos  = 0;
-        Serial.printf("beam %u -> note %u (mode %u)\n", beam, beam, stringType);
+        Serial.printf("beam %u -> note %u\n", beam, beam);
       }
     }
     lastMask = mask;
