@@ -1,20 +1,29 @@
 #include <Arduino.h>
 #include <driver/i2s.h>
 #include "notes_data.h"
-#include "string2/notes_data_string2.h"
 
 /* ------------------------------------------------------------------
- * Laser Harp - ESP32 audio engine (Clean One-Shot, No Looping)
+ * Laser Harp - ESP32 audio engine: Middle C (C4) to B4 (7 Diatonic Notes)
+ *
+ * Pitches:
+ *   Beam 0 -> C4 (Middle C, ~261.6 Hz)
+ *   Beam 1 -> D4 (~293.7 Hz)
+ *   Beam 2 -> E4 (~329.6 Hz)
+ *   Beam 3 -> F4 (~349.2 Hz)
+ *   Beam 4 -> G4 (~392.0 Hz)
+ *   Beam 5 -> A4 (~440.0 Hz)
+ *   Beam 6 -> B4 (~493.9 Hz)
  *
  * Behavior:
- * 1. Triggers sound when a beam is BLOCKED (light interrupted).
- * 2. NO PERSISTENCE / NO LOOPING: Plays the natural note sample once
- *    from start to finish, then stops. Holding a beam does not repeat
- *    or loop.
+ * 1. Triggers sound instantly when a beam is BLOCKED (light interrupted).
+ * 2. NO PERSISTENCE / NO LOOPING: Plays the natural note recording once
+ *    from start to finish and then stops cleanly.
  * 3. NO SOUND ON LIGHT RESTORED: Removing your hand does not trigger
  *    any sound.
- * 4. Highest-Note Priority: If multiple beams are blocked at once,
- *    the highest note plays.
+ * 4. Zero-Latency Start: Skips the 180ms lead-in silence in the audio
+ *    recordings so the note speaks the instant your hand breaks the beam.
+ * 5. Highest-Note Priority: If multiple beams are blocked, the highest
+ *    pitch plays.
  * ------------------------------------------------------------------ */
 
 #define ATMEGA_RX_PIN 16
@@ -25,48 +34,30 @@
 // Set to 1 if your circuit sends 1 when light is blocked.
 #define BEAM_BLOCKED_VALUE 0
 
-// Sound Set Selection:
-// 0 = Metallic/Gamelan single notes (string2/notes_data_string2.h)
-// 1 = Salamander Grand Piano Chords (notes_data.h)
-#define USE_PIANO_CHORDS 0
-
 #define I2S_SAMPLE_RATE   8000
 #define I2S_DMA_BUF_COUNT 8
 #define I2S_DMA_BUF_LEN   256
 
-struct NoteItem {
-  const uint8_t* data;
-  uint32_t len;
-  const char* name;
+const char* const NOTE_NAMES[NUM_BEAMS] = {
+  "C4 (Middle C)",
+  "D4",
+  "E4",
+  "F4",
+  "G4",
+  "A4",
+  "B4"
 };
 
-// Metallic Note Set (string2)
-const NoteItem METALLIC_NOTES[NUM_BEAMS] = {
-  { noteBb4,     noteBb4Len,     "Bb4"     }, // Beam 0
-  { noteB4,      noteB4Len,      "B4"      }, // Beam 1
-  { noteEb5,     noteEb5Len,     "Eb5"     }, // Beam 2
-  { noteF5,      noteF5Len,      "F5"      }, // Beam 3
-  { noteFs5,     noteFs5Len,     "F#5"     }, // Beam 4
-  { noteAb5,     noteAb5Len,     "Ab5"     }, // Beam 5
-  { noteBbChord, noteBbChordLen, "BbChord" }  // Beam 6
+// Lead-in silence offset (samples) for instant note attack
+const uint32_t NOTE_START_OFFSETS[NUM_BEAMS] = {
+  1440, // C4
+  1550, // D4
+  1435, // E4
+  1450, // F4
+  1490, // G4
+  1450, // A4
+  1450  // B4
 };
-
-// Piano Chord Set (notes_data.h)
-const NoteItem PIANO_CHORDS[NUM_BEAMS] = {
-  { chordCmaj, chordCmajLen, "C major (Sa)"  }, // Beam 0
-  { chordDmin, chordDminLen, "D minor (Re)"  }, // Beam 1
-  { chordEmin, chordEminLen, "E minor (Ga)"  }, // Beam 2
-  { chordFmaj, chordFmajLen, "F major (Ma)"  }, // Beam 3
-  { chordGmaj, chordGmajLen, "G major (Pa)"  }, // Beam 4
-  { chordAmin, chordAminLen, "A minor (Dha)" }, // Beam 5
-  { chordBdim, chordBdimLen, "B dim   (Ni)"  }  // Beam 6
-};
-
-#if USE_PIANO_CHORDS == 1
-  #define ACTIVE_TABLE PIANO_CHORDS
-#else
-  #define ACTIVE_TABLE METALLIC_NOTES
-#endif
 
 uint8_t lastMask = 0xFF;
 int8_t  currentNote = -1;       // -1 = silence/idle, 0..6 = active beam
@@ -107,7 +98,7 @@ static void fillAudio(int frames) {
     uint8_t out8 = 128;   // 128 is DAC midpoint (silence)
 
     if (currentNote >= 0 && currentNote < NUM_BEAMS) {
-      const NoteItem &note = ACTIVE_TABLE[currentNote];
+      const NoteSample &note = NOTE_TABLE[currentNote];
 
       if (currentPos < note.len) {
         out8 = note.data[currentPos];
@@ -132,9 +123,10 @@ void setup() {
   Serial2.begin(9600, SERIAL_8N1, ATMEGA_RX_PIN, ATMEGA_TX_PIN);
   i2sInit();
   Serial.println("==================================================");
-  Serial.println("Laser Harp ESP32 - Natural Playback (No Loop)");
-  Serial.printf("Sound Set: %s\n", USE_PIANO_CHORDS ? "Piano Chords" : "Metallic Notes");
+  Serial.println("Laser Harp ESP32 - Middle C to B (7 Notes, C4..B4)");
+  Serial.println("Beams: 0=C4, 1=D4, 2=E4, 3=F4, 4=G4, 5=A4, 6=B4");
   Serial.printf("Trigger: Plays when beam is BLOCKED (bit == %d)\n", BEAM_BLOCKED_VALUE);
+  Serial.println("Playback: Clean one-shot natural decay (no looping)");
   Serial.println("==================================================");
 }
 
@@ -158,9 +150,9 @@ void loop() {
 
       if (newlyBlockedHighest >= 0) {
         currentNote = newlyBlockedHighest;
-        currentPos  = 0;  // Start playing from beginning once
-        Serial.printf("beam %d BLOCKED -> note %s\n",
-                      currentNote, ACTIVE_TABLE[currentNote].name);
+        currentPos  = NOTE_START_OFFSETS[currentNote]; // Instant attack
+        Serial.printf("beam %d BLOCKED -> playing %s\n",
+                      currentNote, NOTE_NAMES[currentNote]);
       }
     }
 
