@@ -179,6 +179,34 @@ static void fillAudio(int frames) {
   i2s_write(I2S_NUM_0, buf, frames * 2 * sizeof(uint16_t), &bytesWritten, portMAX_DELAY);
 }
 
+struct SongNote {
+  int8_t   beam;       // 0..6 (C4..B4), or -1 for rest
+  uint16_t durationMs; // note duration in ms
+};
+
+// Song 1: My Heart Will Go On (Titanic Theme) - Celine Dion / James Horner
+const SongNote SONG_TITANIC[] = {
+  // Whistle Hook
+  { 2, 500 }, { -1, 60 }, { 3, 250 }, { -1, 60 }, { 4, 700 }, { -1, 100 },
+  { 5, 500 }, { -1, 60 }, { 4, 250 }, { -1, 60 }, { 3, 250 }, { -1, 60 },
+  { 2, 250 }, { -1, 60 }, { 1, 250 }, { -1, 60 }, { 0, 700 }, { -1, 150 },
+  { 2, 500 }, { -1, 60 }, { 3, 250 }, { -1, 60 }, { 4, 700 }, { -1, 100 },
+  { 5, 500 }, { -1, 60 }, { 4, 500 }, { -1, 60 }, { 1, 900 }, { -1, 300 },
+
+  // Chorus: "Near, far, wherever you are..."
+  { 2, 450 }, { -1, 60 }, { 3, 350 }, { -1, 60 }, { 4, 800 }, { -1, 100 },
+  { 5, 500 }, { -1, 60 }, { 4, 400 }, { -1, 60 }, { 3, 300 }, { -1, 60 },
+  { 2, 300 }, { -1, 60 }, { 1, 300 }, { -1, 60 }, { 0, 800 }, { -1, 150 },
+  { 1, 400 }, { -1, 60 }, { 2, 400 }, { -1, 60 }, { 3, 600 }, { -1, 60 },
+  { 2, 400 }, { -1, 60 }, { 1, 300 }, { -1, 60 }, { 0, 300 }, { -1, 60 },
+  { 1, 300 }, { -1, 60 }, { 2, 400 }, { -1, 60 }, { 1, 800 }, { -1, 1000 }
+};
+const uint16_t TITANIC_NOTE_COUNT = sizeof(SONG_TITANIC) / sizeof(SONG_TITANIC[0]);
+
+bool     songPlaying      = false;
+uint16_t songIndex        = 0;
+uint32_t songNextNoteTime = 0;
+
 void setup() {
   Serial.begin(115200);
   Serial2.begin(9600, SERIAL_8N1, ATMEGA_RX_PIN, ATMEGA_TX_PIN);
@@ -188,15 +216,17 @@ void setup() {
 
   i2sInit();
   printCurrentInstrument();
+  Serial.println("\n*** HINT: Short-click D18 to change instrument | Hold D18 (1 sec) to play 'My Heart Will Go On' ***\n");
 }
 
 void loop() {
   // ---------------------------------------------------------------
-  // 1. Push Button Handling (Instrument Switching with 50ms Debounce)
+  // 1. Push Button Handling (Short-Click = Next Instrument, Hold 800ms = Play Song)
   // ---------------------------------------------------------------
   static int lastReading = HIGH;
   static int buttonState = HIGH;
   static uint32_t lastDebounceTime = 0;
+  static uint32_t pressStartTime = 0;
   const uint32_t debounceDelay = 50;
 
   const int reading = digitalRead(SCALE_BUTTON_PIN);
@@ -207,18 +237,79 @@ void loop() {
   if ((millis() - lastDebounceTime) > debounceDelay) {
     if (reading != buttonState) {
       buttonState = reading;
-      // Falling edge: Button pressed (Active-LOW)
       if (buttonState == LOW) {
-        currentInstrument = (currentInstrument + 1) % NUM_INSTRUMENTS;
-        currentNote = -1; // Silence any ongoing note immediately
-        printCurrentInstrument();
+        // Button pressed down: record start time
+        pressStartTime = millis();
+      } else {
+        // Button released: check press duration
+        const uint32_t pressDuration = millis() - pressStartTime;
+        if (pressDuration >= 700) {
+          // LONG PRESS: Toggle "My Heart Will Go On" Auto-Play!
+          songPlaying = !songPlaying;
+          if (songPlaying) {
+            songIndex = 0;
+            songNextNoteTime = millis();
+            Serial.printf("\n>>> STARTING AUTO-PLAY: 'My Heart Will Go On' on [%s] <<<\n",
+                          INSTRUMENTS[currentInstrument].name);
+          } else {
+            currentNote = -1;
+            Serial.println("\n>>> AUTO-PLAY STOPPED <<<\n");
+          }
+        } else {
+          // SHORT CLICK: Cycle to next instrument
+          currentInstrument = (currentInstrument + 1) % NUM_INSTRUMENTS;
+          currentNote = -1;
+          printCurrentInstrument();
+        }
       }
     }
   }
   lastReading = reading;
 
   // ---------------------------------------------------------------
-  // 2. Laser Harp Beam Processing via Serial2
+  // 2. Serial Command: 'p' or 's' triggers/stops Song 1
+  // ---------------------------------------------------------------
+  if (Serial.available()) {
+    char c = Serial.read();
+    if (c == 'p' || c == 'P' || c == 's' || c == 'S') {
+      songPlaying = !songPlaying;
+      if (songPlaying) {
+        songIndex = 0;
+        songNextNoteTime = millis();
+        Serial.printf("\n>>> STARTING AUTO-PLAY: 'My Heart Will Go On' on [%s] <<<\n",
+                      INSTRUMENTS[currentInstrument].name);
+      } else {
+        currentNote = -1;
+        Serial.println("\n>>> AUTO-PLAY STOPPED <<<\n");
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // 3. Auto-Play Song Sequencer Engine
+  // ---------------------------------------------------------------
+  if (songPlaying && millis() >= songNextNoteTime) {
+    if (songIndex < TITANIC_NOTE_COUNT) {
+      const SongNote &sn = SONG_TITANIC[songIndex++];
+      if (sn.beam >= 0 && sn.beam < NUM_BEAMS) {
+        currentNote = sn.beam;
+        const Instrument &inst = INSTRUMENTS[currentInstrument];
+        currentPos = (inst.offsets != NULL) ? inst.offsets[currentNote] : 0;
+        Serial.printf("[%s] Note %s\n", inst.name, NOTE_NAMES[currentNote]);
+      } else {
+        currentNote = -1; // Rest
+      }
+      songNextNoteTime = millis() + sn.durationMs;
+    } else {
+      // Song finished: loop or stop
+      songPlaying = false;
+      currentNote = -1;
+      Serial.println("\n>>> 'My Heart Will Go On' finished! <<<\n");
+    }
+  }
+
+  // ---------------------------------------------------------------
+  // 4. Laser Harp Beam Processing via Serial2
   // ---------------------------------------------------------------
   if (Serial2.available()) {
     const uint8_t mask = Serial2.read();
@@ -238,6 +329,9 @@ void loop() {
       }
 
       if (newlyBlockedHighest >= 0) {
+        // Manual play interrupts auto-play
+        if (songPlaying) songPlaying = false;
+
         currentNote = newlyBlockedHighest;
         const Instrument &inst = INSTRUMENTS[currentInstrument];
         currentPos = (inst.offsets != NULL) ? inst.offsets[currentNote] : 0; // Instant attack
@@ -251,7 +345,7 @@ void loop() {
   }
 
   // ---------------------------------------------------------------
-  // 3. Audio DMA Fill
+  // 5. Audio DMA Fill
   // ---------------------------------------------------------------
   fillAudio(I2S_DMA_BUF_LEN);
 }

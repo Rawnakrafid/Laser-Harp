@@ -3,6 +3,7 @@
 #endif
 
 #include <avr/io.h>
+#include <avr/pgmspace.h>
 #include <util/delay.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -93,7 +94,7 @@ typedef struct {
  * ================================================================== */
 
 /* --- Song 0: Jingle Bells --- */
-static const NoteEvent SONG_JINGLE_BELLS[] = {
+static const NoteEvent PROGMEM SONG_JINGLE_BELLS[] = {
     /* "Jingle bells, jingle bells, jingle all the way" */
     {BEAM_2_E4, 250}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_2_E4, 250}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_2_E4, 500}, {BEAM_REST, 100},
     {BEAM_2_E4, 250}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_2_E4, 250}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_2_E4, 500}, {BEAM_REST, 100},
@@ -120,7 +121,7 @@ static const NoteEvent SONG_JINGLE_BELLS[] = {
 };
 
 /* --- Song 1: Seven Nation Army (The White Stripes) --- */
-static const NoteEvent SONG_SEVEN_NATION[] = {
+static const NoteEvent PROGMEM SONG_SEVEN_NATION[] = {
     {BEAM_2_E4, 450}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_2_E4, 250}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_4_G4, 300}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_2_E4, 300}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_1_D4, 300}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_0_C4, 550}, {BEAM_REST, RELEASE_GAP_MS},
@@ -145,7 +146,7 @@ static const NoteEvent SONG_SEVEN_NATION[] = {
 };
 
 /* --- Song 2: Super Mario Bros Theme --- */
-static const NoteEvent SONG_SUPER_MARIO[] = {
+static const NoteEvent PROGMEM SONG_SUPER_MARIO[] = {
     {BEAM_2_E4, 180}, {BEAM_REST, 60}, {BEAM_2_E4, 180}, {BEAM_REST, 120}, {BEAM_2_E4, 180}, {BEAM_REST, 120},
     {BEAM_0_C4, 180}, {BEAM_REST, 60}, {BEAM_2_E4, 220}, {BEAM_REST, 120}, {BEAM_4_G4, 350}, {BEAM_REST, 400},
 
@@ -160,7 +161,7 @@ static const NoteEvent SONG_SUPER_MARIO[] = {
 };
 
 /* --- Song 3: Ode to Joy (Beethoven) --- */
-static const NoteEvent SONG_ODE_TO_JOY[] = {
+static const NoteEvent PROGMEM SONG_ODE_TO_JOY[] = {
     {BEAM_2_E4, 350}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_2_E4, 350}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_3_F4, 350}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_4_G4, 350}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_4_G4, 350}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_3_F4, 350}, {BEAM_REST, RELEASE_GAP_MS},
@@ -181,7 +182,7 @@ static const NoteEvent SONG_ODE_TO_JOY[] = {
 };
 
 /* --- Song 4: Twinkle, Twinkle, Little Star --- */
-static const NoteEvent SONG_TWINKLE[] = {
+static const NoteEvent PROGMEM SONG_TWINKLE[] = {
     {BEAM_0_C4, 350}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_0_C4, 350}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_4_G4, 350}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_4_G4, 350}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_5_A4, 350}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_5_A4, 350}, {BEAM_REST, RELEASE_GAP_MS},
@@ -193,7 +194,7 @@ static const NoteEvent SONG_TWINKLE[] = {
 };
 
 /* --- Song 5: Frère Jacques (Are You Sleeping) --- */
-static const NoteEvent SONG_FRERE_JACQUES[] = {
+static const NoteEvent PROGMEM SONG_FRERE_JACQUES[] = {
     {BEAM_0_C4, 350}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_1_D4, 350}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_2_E4, 350}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_0_C4, 350}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_0_C4, 350}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_1_D4, 350}, {BEAM_REST, RELEASE_GAP_MS},
@@ -218,7 +219,7 @@ static const NoteEvent SONG_FRERE_JACQUES[] = {
 };
 
 /* --- Song 6: Row, Row, Row Your Boat --- */
-static const NoteEvent SONG_ROW_BOAT[] = {
+static const NoteEvent PROGMEM SONG_ROW_BOAT[] = {
     {BEAM_0_C4, 400}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_0_C4, 400}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_0_C4, 300}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_1_D4, 200}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_2_E4, 450}, {BEAM_REST, 100},
@@ -238,7 +239,7 @@ static const NoteEvent SONG_ROW_BOAT[] = {
 };
 
 /* --- Song 7: Sparkle (Your Name / Kimi no Na wa - RADWIMPS) --- */
-static const NoteEvent SONG_SPARKLE[] = {
+static const NoteEvent PROGMEM SONG_SPARKLE[] = {
     /* Iconic Intro Arpeggio */
     {BEAM_0_C4, 250}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_2_E4, 250}, {BEAM_REST, RELEASE_GAP_MS},
     {BEAM_4_G4, 250}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_6_B4, 350}, {BEAM_REST, RELEASE_GAP_MS},
@@ -285,16 +286,59 @@ static const NoteEvent SONG_SPARKLE[] = {
     {BEAM_1_D4, 300}, {BEAM_REST, RELEASE_GAP_MS}, {BEAM_0_C4, 800}, {BEAM_REST, 800}
 };
 
+/* --- Song: My Heart Will Go On (Titanic Theme) --- */
+static const NoteEvent PROGMEM SONG_MY_HEART_WILL_GO_ON[] = {
+    /* Tin Whistle Hook */
+    {BEAM_2_E4, 500}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_3_F4, 250}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_4_G4, 700}, {BEAM_REST, 100},
+    {BEAM_5_A4, 500}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_4_G4, 250}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_3_F4, 250}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_2_E4, 250}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_1_D4, 250}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_0_C4, 700}, {BEAM_REST, 150},
+
+    {BEAM_2_E4, 500}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_3_F4, 250}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_4_G4, 700}, {BEAM_REST, 100},
+    {BEAM_5_A4, 500}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_4_G4, 500}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_1_D4, 900}, {BEAM_REST, 250},
+
+    /* Chorus: "Near, far, wherever you are..." */
+    {BEAM_2_E4, 450}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_3_F4, 350}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_4_G4, 800}, {BEAM_REST, 100},
+    {BEAM_5_A4, 500}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_4_G4, 400}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_3_F4, 300}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_2_E4, 300}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_1_D4, 300}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_0_C4, 800}, {BEAM_REST, 150},
+
+    {BEAM_1_D4, 400}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_2_E4, 400}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_3_F4, 600}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_2_E4, 400}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_1_D4, 300}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_0_C4, 300}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_1_D4, 300}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_2_E4, 400}, {BEAM_REST, RELEASE_GAP_MS},
+    {BEAM_1_D4, 800}, {BEAM_REST, 800}
+};
+
 /* Master Playlist */
 static const Song PLAYLIST[] = {
-    { "Jingle Bells",        SONG_JINGLE_BELLS,     sizeof(SONG_JINGLE_BELLS)     / sizeof(NoteEvent) },
-    { "Seven Nation Army",   SONG_SEVEN_NATION,     sizeof(SONG_SEVEN_NATION)     / sizeof(NoteEvent) },
-    { "Super Mario Bros",    SONG_SUPER_MARIO,      sizeof(SONG_SUPER_MARIO)      / sizeof(NoteEvent) },
-    { "Ode to Joy",          SONG_ODE_TO_JOY,       sizeof(SONG_ODE_TO_JOY)       / sizeof(NoteEvent) },
-    { "Twinkle Twinkle",     SONG_TWINKLE,          sizeof(SONG_TWINKLE)          / sizeof(NoteEvent) },
-    { "Frere Jacques",       SONG_FRERE_JACQUES,    sizeof(SONG_FRERE_JACQUES)    / sizeof(NoteEvent) },
-    { "Row Your Boat",       SONG_ROW_BOAT,         sizeof(SONG_ROW_BOAT)         / sizeof(NoteEvent) },
-    { "Sparkle (Your Name)", SONG_SPARKLE,          sizeof(SONG_SPARKLE)          / sizeof(NoteEvent) }
+    { "My Heart Will Go On", SONG_MY_HEART_WILL_GO_ON, sizeof(SONG_MY_HEART_WILL_GO_ON) / sizeof(NoteEvent) },
+    { "Jingle Bells",        SONG_JINGLE_BELLS,        sizeof(SONG_JINGLE_BELLS)        / sizeof(NoteEvent) },
+    { "Seven Nation Army",   SONG_SEVEN_NATION,        sizeof(SONG_SEVEN_NATION)        / sizeof(NoteEvent) },
+    { "Super Mario Bros",    SONG_SUPER_MARIO,         sizeof(SONG_SUPER_MARIO)         / sizeof(NoteEvent) },
+    { "Ode to Joy",          SONG_ODE_TO_JOY,          sizeof(SONG_ODE_TO_JOY)          / sizeof(NoteEvent) },
+    { "Twinkle Twinkle",     SONG_TWINKLE,             sizeof(SONG_TWINKLE)             / sizeof(NoteEvent) },
+    { "Frere Jacques",       SONG_FRERE_JACQUES,       sizeof(SONG_FRERE_JACQUES)       / sizeof(NoteEvent) },
+    { "Row Your Boat",       SONG_ROW_BOAT,            sizeof(SONG_ROW_BOAT)            / sizeof(NoteEvent) },
+    { "Sparkle (Your Name)", SONG_SPARKLE,             sizeof(SONG_SPARKLE)             / sizeof(NoteEvent) }
 };
 #define NUM_SONGS (sizeof(PLAYLIST) / sizeof(Song))
 
@@ -473,19 +517,20 @@ int main(void)
                     current_note_idx = 0; /* Loop song */
                 }
 
-                const NoteEvent* cur_note = &cur_song->notes[current_note_idx];
+                uint8_t note_beam = pgm_read_byte(&(cur_song->notes[current_note_idx].beam));
+                uint16_t note_dur = pgm_read_word(&(cur_song->notes[current_note_idx].duration_ms));
 
-                if (cur_note->beam != BEAM_REST) {
+                if (note_beam != BEAM_REST) {
                     /* Strike note: turn this laser OFF (darkness triggers ATmega1!) */
-                    set_beam_laser(cur_note->beam, false);
-                    currently_dark_beam = cur_note->beam;
+                    set_beam_laser(note_beam, false);
+                    currently_dark_beam = note_beam;
                 } else {
                     /* Rest: all lasers ON */
                     all_lasers_on();
                     currently_dark_beam = BEAM_REST;
                 }
 
-                note_remaining_ms = cur_note->duration_ms;
+                note_remaining_ms = note_dur;
                 current_note_idx++;
             } else {
                 note_remaining_ms--;
