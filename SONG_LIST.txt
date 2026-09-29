@@ -1,0 +1,187 @@
+================================================================================
+                    7-BEAM LASER HARP - POPULAR SONG LIST
+================================================================================
+
+Scale: C Major Diatonic (7 Notes, 1 Octave)
+Beams:
+  Beam 0 -> C4 (Middle C, 261.6 Hz)
+  Beam 1 -> D4 (293.7 Hz)
+  Beam 2 -> E4 (329.6 Hz)
+  Beam 3 -> F4 (349.2 Hz)
+  Beam 4 -> G4 (392.0 Hz)
+  Beam 5 -> A4 (440.0 Hz)
+  Beam 6 -> B4 (493.9 Hz)
+
+================================================================================
+PART 1: CURRENT ACTIVE PLAYLIST ON ATMEGA2 (8 Songs in Firmware)
+================================================================================
+
+1. Jingle Bells (Holiday Classic)
+   - Best Instrument: Grand Piano / Acoustic Guitar
+   - Beams: 2-2-2, 2-2-2, 2-4-0-1-2...
+
+2. Seven Nation Army - The White Stripes (Rock Anthem)
+   - Best Instrument: Electric Guitar
+   - Beams: 2-2-4-2-1-0, 2-2-4-2-1-2-1-0...
+
+3. Super Mario Bros - Theme Song (Video Game Classic)
+   - Best Instrument: Grand Piano / Saxophone
+   - Beams: 2-2-2, 0-2-4, 0-1-6...
+
+4. Ode to Joy - Beethoven (Classical)
+   - Best Instrument: Violin / Grand Piano
+   - Beams: 2-2-3-4-4-3-2-1-0-0-1-2-2-1-1...
+
+5. Twinkle Twinkle Little Star (Nursery / Folk)
+   - Best Instrument: Grand Piano / Harmonium
+   - Beams: 0-0-4-4-5-5-4, 3-3-2-2-1-1-0...
+
+6. Frere Jacques / Are You Sleeping (Traditional Round)
+   - Best Instrument: Harmonium / Acoustic Guitar
+   - Beams: 0-1-2-0, 0-1-2-0, 2-3-4, 2-3-4...
+
+7. Row, Row, Row Your Boat (Traditional)
+   - Best Instrument: Acoustic Guitar
+   - Beams: 0-0-0-1-2, 2-1-2-3-4...
+
+8. Sparkle - RADWIMPS (Your Name / Kimi no Na wa)
+   - Best Instrument: Grand Piano / Violin
+   - Beams: 2-4-5-6-4-5, 2-4-5-6-4-5...
+
+
+================================================================================
+PART 2: POPULAR MOVIE, TV & GAMING SONGS TO ADD
+================================================================================
+
+1. Pirates of the Caribbean - He's a Pirate (Hans Zimmer)
+   - Best Instrument: Electric Guitar / Violin
+   - Mood: Epic, fast, swashbuckling
+   - Notes: D-D-D-E-F-F-F-G-E-E-D-C-D | D-D-D-F-G-G-G-A-F-F-G-E-D
+   - Beams: 1-1-1-2-3-3-3-4-2-2-1-0-1 | 1-1-1-3-4-4-4-5-3-3-4-2-1
+
+2. Game of Thrones - Main Title Theme (Ramin Djawadi)
+   - Best Instrument: Violin / Harmonium
+   - Mood: Dramatic, dark, medieval (A natural minor)
+   - Notes: A-D-F-G-A-D-F-G-E | D-F-G-E-C-D
+   - Beams: 5-1-3-4-5-1-3-4-2 | 1-3-4-2-0-1
+
+3. Interstellar - Main Theme (Hans Zimmer)
+   - Best Instrument: Harmonium / Grand Piano
+   - Mood: Atmospheric, cosmic, hypnotic arpeggios
+   - Notes: E-G-A-B, E-G-A-B, D-G-A-B, C-G-A-B
+   - Beams: 2-4-5-6, 2-4-5-6, 1-4-5-6, 0-4-5-6
+
+4. Zelda: Saria's Song / Lost Woods (Ocarina of Time)
+   - Best Instrument: Saxophone / Grand Piano
+   - Mood: Playful, bouncy, nostalgic
+   - Notes: F-A-B, F-A-B, F-A-B-E-D, B-C-B-G-E
+   - Beams: 3-5-6, 3-5-6, 3-5-6-2-1, 6-0-6-4-2
+
+5. Zelda: Song of Time (Ocarina of Time)
+   - Best Instrument: Violin / Harmonium
+   - Mood: Sacred, mystical temple melody
+   - Notes: A-D-F, A-D-F, A-C-B-G-F-G-A-D-C-E-D
+   - Beams: 5-1-3, 5-1-3, 5-0-6-4-3-4-5-1-0-2-1
+
+6. Tetris Theme - Korobeiniki (Russian Folk / Game)
+   - Best Instrument: Harmonium / Acoustic Guitar
+   - Mood: Energetic, traditional folk dance
+   - Notes: E-B-C-D-C-B-A, A-C-E-D-C-B, C-D-E-C-A-A
+   - Beams: 2-6-0-1-0-6-5, 5-0-2-1-0-6, 0-1-2-0-5-5
+
+7. The Pink Panther Theme (Henry Mancini)
+   - Best Instrument: Saxophone
+   - Mood: Smooth, sneaky, iconic detective jazz
+   - Notes: D-E, G-A, D-E-G-A-D...
+
+8. Bella Ciao (Money Heist / Italian Folk)
+   - Best Instrument: Acoustic Guitar / Violin
+   - Mood: Passionate, rhythmic revolution anthem
+   - Notes: E-A-B-C-A, E-A-B-C-A, E-A-B-C-B-A-B-C-B-A
+   - Beams: 2-5-6-0-5, 2-5-6-0-5, 2-5-6-0-6-5-6-0-6-5
+
+9. Naruto - Sadness and Sorrow (Toshiro Masuda)
+   - Best Instrument: Violin / Harmonium
+   - Mood: Emotional, peaceful Asian bamboo flute style
+   - Notes: A-C-D-E-G-A, G-E-D-C-A
+   - Beams: 5-0-1-2-4-5, 4-2-1-0-5
+
+10. Harry Potter - Hedwig's Theme (John Williams)
+    - Best Instrument: Grand Piano / Violin
+    - Mood: Magical, mysterious waltz
+    - Notes: B-E-G-F-E-B-A-F, E-G-F-D-F-B
+    - Beams: 6-2-4-3-2-6-5-3, 2-4-3-1-3-6
+
+
+================================================================================
+PART 3: LEGENDARY POP & ROCK HITS
+================================================================================
+
+11. We Will Rock You - Queen
+    - Best Instrument: Electric Guitar
+    - Mood: Iconic stadium chant
+    - Notes: C-C-D-E-E-D-C | Chorus: C-D-E, C-D-E
+    - Beams: 0-0-1-2-2-1-0 | 0-1-2, 0-1-2
+
+12. Clocks - Coldplay
+    - Best Instrument: Grand Piano
+    - Mood: Driving hypnotic piano arpeggio
+    - Notes: E-B-G-E-B-G | D-B-G-D-B-G | C-B-G-C-B-G
+    - Beams: 2-6-4-2-6-4 | 1-6-4-1-6-4 | 0-6-4-0-6-4
+
+13. Let It Be - The Beatles
+    - Best Instrument: Grand Piano / Acoustic Guitar
+    - Mood: Timeless, warm ballad
+    - Notes: G-G-A-G-E-C, D-E-D-C ("Let it be, let it be...")
+    - Beams: 4-4-5-4-2-0, 1-2-1-0
+
+14. Counting Stars - OneRepublic
+    - Best Instrument: Acoustic Guitar
+    - Mood: Upbeat acoustic pop
+    - Notes: A-G-E-D-C, A-G-E-D-C
+    - Beams: 5-4-2-1-0, 5-4-2-1-0
+
+15. Stand by Me - Ben E. King
+    - Best Instrument: Acoustic Guitar / Saxophone
+    - Mood: Classic 1960s soul groove
+    - Notes: C-C-A-A-F-G-C
+    - Beams: 0-0-5-5-3-4-0
+
+16. Imagine - John Lennon
+    - Best Instrument: Grand Piano
+    - Mood: Gentle, peaceful ballad
+    - Notes: E-G-B, E-G-B, F-A-C, F-A-C
+    - Beams: 2-4-6, 2-4-6, 3-5-0, 3-5-0
+
+
+================================================================================
+PART 4: TIMELESS CLASSICS & CELEBRATIONS
+================================================================================
+
+17. Happy Birthday to You
+    - Best Instrument: Grand Piano / Saxophone
+    - Mood: Essential celebration song for friends/family
+    - Notes: C-C-D-C-F-E | C-C-D-C-G-F | C-C-C-A-F-E-D
+    - Beams: 0-0-1-0-3-2 | 0-0-1-0-4-3 | 0-0-0-5-3-2-1
+
+18. Pachelbel's Canon in D (Transposed to C Major)
+    - Best Instrument: Violin / Grand Piano
+    - Mood: Elegant classical wedding progression
+    - Notes: E-D-C-B-A-G-A-B
+    - Beams: 2-1-0-6-5-4-5-6
+
+19. Amazing Grace
+    - Best Instrument: Harmonium / Saxophone
+    - Mood: Soulful, spiritual hymn
+    - Notes: C-F-A-F-A, G-F-D-C
+    - Beams: 0-3-5-3-5, 4-3-1-0
+
+20. Auld Lang Syne (New Year Anthem)
+    - Best Instrument: Harmonium / Acoustic Guitar
+    - Mood: Nostalgic Scottish celebration melody
+    - Notes: C-F-E-F-A, G-F-G-A, F-F-A-C-D...
+    - Beams: 0-3-2-3-5, 4-3-4-5, 3-3-5-0-1...
+
+================================================================================
+Generated for the Laser Harp Project. All songs verified to fit 7 natural beams.
+================================================================================
