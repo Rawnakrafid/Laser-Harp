@@ -112,21 +112,120 @@ uint8_t  lastMask          = 0xFF;
 int8_t   currentNote       = -1;   // -1 = silence/idle, 0..6 = active beam
 uint32_t currentPos        = 0;
 
-#include <LiquidCrystal.h>
+/* ------------------------------------------------------------------
+ * ESP32-Tuned HD44780 4-bit Driver (Wide Margins for 240 MHz MCU)
+ * ------------------------------------------------------------------ */
 
-// 16x2 Parallel LCD (RS, Enable, D4, D5, D6, D7)
-LiquidCrystal lcd(LCD_RS_PIN, LCD_E_PIN, LCD_D4_PIN, LCD_D5_PIN, LCD_D6_PIN, LCD_D7_PIN);
+static void lcdPulseEnable() {
+  delayMicroseconds(10);          // Setup time (data lines settle)
+  digitalWrite(LCD_E_PIN, HIGH);
+  delayMicroseconds(25);          // Enable pulse width (guaranteed >= 25us)
+  digitalWrite(LCD_E_PIN, LOW);
+  delayMicroseconds(100);         // Execution settling time
+}
+
+static void lcdWriteNibble(uint8_t nibble) {
+  digitalWrite(LCD_D4_PIN, (nibble & 0x01) ? HIGH : LOW);
+  digitalWrite(LCD_D5_PIN, (nibble & 0x02) ? HIGH : LOW);
+  digitalWrite(LCD_D6_PIN, (nibble & 0x04) ? HIGH : LOW);
+  digitalWrite(LCD_D7_PIN, (nibble & 0x08) ? HIGH : LOW);
+  lcdPulseEnable();
+}
+
+static void lcdSendByte(uint8_t val, bool isData) {
+  digitalWrite(LCD_RS_PIN, isData ? HIGH : LOW);
+  delayMicroseconds(5);
+  lcdWriteNibble(val >> 4);
+  delayMicroseconds(10);
+  lcdWriteNibble(val & 0x0F);
+  if (!isData && (val == 0x01 || val == 0x02)) {
+    delay(5); // Clear/Home needs > 1.52ms (we give 5ms)
+  }
+}
+
+static void lcdCommand(uint8_t cmd) {
+  lcdSendByte(cmd, false);
+}
+
+static void lcdWriteChar(char c) {
+  lcdSendByte((uint8_t)c, true);
+}
+
+static void lcdPrint(const char* str) {
+  while (*str) {
+    lcdWriteChar(*str++);
+  }
+}
+
+static void lcdSetCursor(uint8_t col, uint8_t row) {
+  const uint8_t rowOffsets[] = { 0x00, 0x40 };
+  lcdCommand(0x80 | (col + rowOffsets[row & 1]));
+}
+
+static void lcdInit() {
+  pinMode(LCD_RS_PIN, OUTPUT);
+  pinMode(LCD_E_PIN,  OUTPUT);
+  pinMode(LCD_D4_PIN, OUTPUT);
+  pinMode(LCD_D5_PIN, OUTPUT);
+  pinMode(LCD_D6_PIN, OUTPUT);
+  pinMode(LCD_D7_PIN, OUTPUT);
+
+  digitalWrite(LCD_RS_PIN, LOW);
+  digitalWrite(LCD_E_PIN,  LOW);
+  digitalWrite(LCD_D4_PIN, LOW);
+  digitalWrite(LCD_D5_PIN, LOW);
+  digitalWrite(LCD_D6_PIN, LOW);
+  digitalWrite(LCD_D7_PIN, LOW);
+
+  // Generous 100ms power-on stabilization delay
+  delay(100);
+
+  // Standard HD44780 4-bit startup sequence with generous delays:
+  lcdWriteNibble(0x03);
+  delay(10);
+  lcdWriteNibble(0x03);
+  delay(5);
+  lcdWriteNibble(0x03);
+  delay(5);
+
+  // Switch to 4-bit mode:
+  lcdWriteNibble(0x02);
+  delay(5);
+
+  // Function set: 4-bit mode, 2 lines, 5x8 font
+  lcdCommand(0x28);
+  delay(2);
+  lcdCommand(0x28); // repeated for clone stability
+  delay(2);
+
+  // Display OFF
+  lcdCommand(0x08);
+  delay(2);
+
+  // Display CLEAR
+  lcdCommand(0x01);
+  delay(5);
+
+  // Entry Mode: Increment cursor, no display shift
+  lcdCommand(0x06);
+  delay(2);
+
+  // Display ON, Cursor ON, Blink ON (visible proof controller is running!)
+  lcdCommand(0x0F);
+  delay(2);
+}
 
 static void updateLcdDisplay() {
-  lcd.clear();
-  lcd.setCursor(0, 0);
-  lcd.print("Hello from ESP!");
-  lcd.setCursor(0, 1);
+  lcdCommand(0x01); // Clear
+  delay(5);
+  lcdSetCursor(0, 0);
+  lcdPrint("HELLO FROM ESP!");
+  lcdSetCursor(0, 1);
   switch (currentInstrument) {
-    case 0: lcd.print("1. Piano"); break;
-    case 1: lcd.print("2. Guitar"); break;
-    case 2: lcd.print("3. Harmonium"); break;
-    case 3: lcd.print("4. Metallic"); break;
+    case 0: lcdPrint("1. Piano"); break;
+    case 1: lcdPrint("2. Guitar"); break;
+    case 2: lcdPrint("3. Harmonium"); break;
+    case 3: lcdPrint("4. Metallic"); break;
   }
 }
 
@@ -203,13 +302,8 @@ void setup() {
   // Pushbutton on GPIO 18 (D18) with internal pull-up
   pinMode(SCALE_BUTTON_PIN, INPUT_PULLUP);
 
-  // Power stabilization delay for 5V LCD logic
-  delay(150);
-
-  // Initialize 16x2 LCD with visible blinking cursor
-  lcd.begin(16, 2);
-  lcd.cursor();
-  lcd.blink();
+  // Initialize 16x2 LCD with wide-margin driver
+  lcdInit();
   updateLcdDisplay();
 
   i2sInit();
@@ -221,8 +315,8 @@ void loop() {
   static uint32_t lastTick = 0;
   if (millis() - lastTick >= 1000) {
     lastTick = millis();
-    lcd.setCursor(14, 0);
-    lcd.print((millis() / 1000) % 10);
+    lcdSetCursor(15, 0);
+    lcdWriteChar('0' + ((millis() / 1000) % 10));
   }
   // ---------------------------------------------------------------
   // 1. Push Button Handling (Instrument Switching with 50ms Debounce)
