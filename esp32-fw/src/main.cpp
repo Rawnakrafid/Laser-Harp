@@ -34,6 +34,14 @@
 #define SCALE_BUTTON_PIN  18
 #define NUM_BEAMS         7
 
+// 16x2 LCD in 4-bit mode
+#define LCD_RS_PIN        19
+#define LCD_E_PIN         23
+#define LCD_D4_PIN        21
+#define LCD_D5_PIN        27
+#define LCD_D6_PIN        32
+#define LCD_D7_PIN        33
+
 // Set to 0 if your circuit sends 0 when light is blocked (light lost).
 // Set to 1 if your circuit sends 1 when light is blocked.
 #define BEAM_BLOCKED_VALUE 0
@@ -103,6 +111,105 @@ uint8_t  currentInstrument = 0;   // 0 = Piano (Default)
 uint8_t  lastMask          = 0xFF;
 int8_t   currentNote       = -1;   // -1 = silence/idle, 0..6 = active beam
 uint32_t currentPos        = 0;
+
+/* ------------------------------------------------------------------
+ * Minimal HD44780 4-bit Parallel LCD Driver (Direct GPIO)
+ * ------------------------------------------------------------------ */
+
+static void lcdPulseEnable() {
+  digitalWrite(LCD_E_PIN, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(LCD_E_PIN, LOW);
+  delayMicroseconds(50);
+}
+
+static void lcdWriteNibble(uint8_t nibble) {
+  digitalWrite(LCD_D4_PIN, (nibble & 0x01) ? HIGH : LOW);
+  digitalWrite(LCD_D5_PIN, (nibble & 0x02) ? HIGH : LOW);
+  digitalWrite(LCD_D6_PIN, (nibble & 0x04) ? HIGH : LOW);
+  digitalWrite(LCD_D7_PIN, (nibble & 0x08) ? HIGH : LOW);
+  lcdPulseEnable();
+}
+
+static void lcdSendByte(uint8_t val, bool isData) {
+  digitalWrite(LCD_RS_PIN, isData ? HIGH : LOW);
+  lcdWriteNibble(val >> 4);
+  lcdWriteNibble(val & 0x0F);
+  if (!isData && (val == 0x01 || val == 0x02)) {
+    delay(2); // Clear and Home commands require >1.52ms
+  }
+}
+
+static void lcdCommand(uint8_t cmd) {
+  lcdSendByte(cmd, false);
+}
+
+static void lcdWriteChar(char c) {
+  lcdSendByte((uint8_t)c, true);
+}
+
+static void lcdPrint(const char* str) {
+  while (*str) {
+    lcdWriteChar(*str++);
+  }
+}
+
+static void lcdSetCursor(uint8_t col, uint8_t row) {
+  const uint8_t rowOffsets[] = { 0x00, 0x40 };
+  lcdCommand(0x80 | (col + rowOffsets[row & 1]));
+}
+
+static void lcdInit() {
+  pinMode(LCD_RS_PIN, OUTPUT);
+  pinMode(LCD_E_PIN,  OUTPUT);
+  pinMode(LCD_D4_PIN, OUTPUT);
+  pinMode(LCD_D5_PIN, OUTPUT);
+  pinMode(LCD_D6_PIN, OUTPUT);
+  pinMode(LCD_D7_PIN, OUTPUT);
+
+  digitalWrite(LCD_RS_PIN, LOW);
+  digitalWrite(LCD_E_PIN,  LOW);
+
+  // Power-on wait > 40ms
+  delay(50);
+
+  // Standard HD44780 4-bit initialization sequence:
+  lcdWriteNibble(0x03);
+  delay(5);
+  lcdWriteNibble(0x03);
+  delayMicroseconds(150);
+  lcdWriteNibble(0x03);
+  delayMicroseconds(150);
+
+  // Switch to 4-bit mode:
+  lcdWriteNibble(0x02);
+  delayMicroseconds(150);
+
+  // 4-bit, 2 lines, 5x8 font
+  lcdCommand(0x28);
+  // Display ON, cursor OFF, blink OFF
+  lcdCommand(0x0C);
+  // Clear display
+  lcdCommand(0x01);
+  delay(2);
+  // Entry mode: auto-increment, no shift
+  lcdCommand(0x06);
+}
+
+static void updateLcdDisplay() {
+  lcdCommand(0x01); // Clear
+  delay(2);
+  lcdSetCursor(0, 0);
+  lcdPrint("Hello from ESP!");
+  lcdSetCursor(0, 1);
+  // Display active instrument on row 2
+  switch (currentInstrument) {
+    case 0: lcdPrint("1. Piano"); break;
+    case 1: lcdPrint("2. Guitar"); break;
+    case 2: lcdPrint("3. Harmonium"); break;
+    case 3: lcdPrint("4. Metallic"); break;
+  }
+}
 
 static inline bool isBeamBlocked(uint8_t mask, uint8_t beam) {
 #if BEAM_BLOCKED_VALUE == 0
@@ -177,6 +284,10 @@ void setup() {
   // Pushbutton on GPIO 18 (D18) with internal pull-up
   pinMode(SCALE_BUTTON_PIN, INPUT_PULLUP);
 
+  // Initialize LCD and show greeting + active instrument
+  lcdInit();
+  updateLcdDisplay();
+
   i2sInit();
   printCurrentInstrument();
 }
@@ -203,6 +314,7 @@ void loop() {
         currentInstrument = (currentInstrument + 1) % NUM_INSTRUMENTS;
         currentNote = -1; // Silence any ongoing note immediately
         printCurrentInstrument();
+        updateLcdDisplay(); // Update LCD row 2 with new instrument!
       }
     }
   }
