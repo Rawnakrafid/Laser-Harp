@@ -203,8 +203,13 @@ void setup() {
   // Pushbutton on GPIO 18 (D18) with internal pull-up
   pinMode(SCALE_BUTTON_PIN, INPUT_PULLUP);
 
-  // Initialize 16x2 LCD
+  // Power stabilization delay for 5V LCD logic
+  delay(150);
+
+  // Initialize 16x2 LCD with visible blinking cursor
   lcd.begin(16, 2);
+  lcd.cursor();
+  lcd.blink();
   updateLcdDisplay();
 
   i2sInit();
@@ -212,6 +217,13 @@ void setup() {
 }
 
 void loop() {
+  // Live seconds ticker in top right corner (proves code is running)
+  static uint32_t lastTick = 0;
+  if (millis() - lastTick >= 1000) {
+    lastTick = millis();
+    lcd.setCursor(14, 0);
+    lcd.print((millis() / 1000) % 10);
+  }
   // ---------------------------------------------------------------
   // 1. Push Button Handling (Instrument Switching with 50ms Debounce)
   // ---------------------------------------------------------------
