@@ -1,0 +1,877 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Laser Harp — Live Monitor</title>
+  <meta name="description" content="Real-time serial monitor for the 7-beam Laser Harp ESP32 audio engine. Visualizes beam triggers, instruments, and note history." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    /* ── Reset & Foundation ─────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg:        #0a0e17;
+      --surface:   #111827;
+      --surface2:  #1a2236;
+      --border:    #1e293b;
+      --text:      #e2e8f0;
+      --text-dim:  #64748b;
+      --accent:    #38bdf8;
+      --accent2:   #818cf8;
+      --glow:      rgba(56, 189, 248, .25);
+      --success:   #34d399;
+      --danger:    #fb7185;
+      --warn:      #fbbf24;
+      --radius:    12px;
+      --font:      'Inter', system-ui, -apple-system, sans-serif;
+      --mono:      'JetBrains Mono', 'Cascadia Code', 'Fira Code', monospace;
+    }
+    html { font-size: 15px; }
+    body {
+      font-family: var(--font);
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+    body::before {
+      content: '';
+      position: fixed; inset: 0;
+      background:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(56,189,248,.08), transparent),
+        radial-gradient(ellipse 60% 40% at 80% 100%, rgba(129,140,248,.06), transparent);
+      pointer-events: none;
+      z-index: 0;
+    }
+
+    /* ── Layout ────────────────────────────────────────── */
+    .app { position: relative; z-index: 1; max-width: 1100px; margin: 0 auto; padding: 24px 20px 40px; }
+
+    /* ── Header ────────────────────────────────────────── */
+    .header {
+      display: flex; align-items: center; gap: 16px;
+      padding-bottom: 20px; margin-bottom: 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header-logo {
+      width: 44px; height: 44px;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      border-radius: 12px;
+      display: grid; place-items: center;
+      font-size: 22px;
+      box-shadow: 0 0 20px var(--glow);
+    }
+    .header-text h1 {
+      font-size: 1.35rem; font-weight: 700;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .header-text p { font-size: .78rem; color: var(--text-dim); margin-top: 2px; }
+    .header-actions { margin-left: auto; display: flex; gap: 10px; align-items: center; }
+
+    /* ── Status Badge ──────────────────────────────────── */
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: .72rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .06em; padding: 5px 12px;
+      border-radius: 20px;
+      background: rgba(100,116,139,.15);
+      color: var(--text-dim);
+      border: 1px solid var(--border);
+      transition: all .3s;
+    }
+    .status-badge .dot {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--text-dim);
+      transition: background .3s;
+    }
+    .status-badge.connected { color: var(--success); border-color: rgba(52,211,153,.3); background: rgba(52,211,153,.08); }
+    .status-badge.connected .dot { background: var(--success); animation: pulse-dot 1.5s infinite; }
+    @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+
+    /* ── Buttons ───────────────────────────────────────── */
+    .btn {
+      display: inline-flex; align-items: center; gap: 7px;
+      font-family: var(--font); font-size: .82rem; font-weight: 600;
+      padding: 9px 18px; border-radius: 8px;
+      border: 1px solid transparent; cursor: pointer;
+      transition: all .2s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff; border-color: transparent;
+      box-shadow: 0 2px 12px var(--glow);
+    }
+    .btn-primary:hover { filter: brightness(1.15); transform: translateY(-1px); box-shadow: 0 4px 20px var(--glow); }
+    .btn-danger { background: rgba(251,113,133,.12); color: var(--danger); border-color: rgba(251,113,133,.25); }
+    .btn-danger:hover { background: rgba(251,113,133,.2); }
+    .btn-ghost { background: var(--surface); color: var(--text-dim); border-color: var(--border); }
+    .btn-ghost:hover { color: var(--text); border-color: var(--text-dim); }
+    .btn:disabled { opacity: .45; cursor: default; pointer-events: none; }
+
+    /* ── Cards ─────────────────────────────────────────── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 18px;
+      border-bottom: 1px solid var(--border);
+      font-size: .78rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: .05em; color: var(--text-dim);
+    }
+    .card-body { padding: 18px; }
+
+    /* ── Instrument Display ────────────────────────────── */
+    .instrument-card .card-body {
+      text-align: center; padding: 28px 18px;
+    }
+    .instrument-name {
+      font-size: 1.9rem; font-weight: 800;
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+      transition: all .35s;
+    }
+    .instrument-name.flash {
+      animation: inst-flash .5s ease;
+    }
+    @keyframes inst-flash {
+      0%   { transform: scale(1); filter: brightness(1); }
+      30%  { transform: scale(1.08); filter: brightness(1.5); }
+      100% { transform: scale(1); filter: brightness(1); }
+    }
+    .instrument-index {
+      font-size: .82rem; color: var(--text-dim); margin-top: 6px;
+    }
+    .instrument-desc {
+      font-size: .78rem; color: var(--text-dim); margin-top: 4px; font-style: italic;
+    }
+
+    /* ── Grid Layout ───────────────────────────────────── */
+    .grid-top { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .grid-bottom { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+
+    /* ── Beam Visualizer ───────────────────────────────── */
+    .beams-container {
+      display: flex; justify-content: center; gap: 12px;
+      padding: 8px 0 4px;
+    }
+    .beam {
+      display: flex; flex-direction: column; align-items: center; gap: 8px;
+      cursor: default;
+    }
+    .beam-bar-wrap {
+      width: 32px; height: 120px;
+      background: var(--surface2);
+      border-radius: 6px;
+      position: relative; overflow: hidden;
+      border: 1px solid var(--border);
+      transition: border-color .2s;
+    }
+    .beam-bar-fill {
+      position: absolute; bottom: 0; left: 0; right: 0;
+      height: 0;
+      border-radius: 0 0 5px 5px;
+      transition: height .12s ease, background .12s;
+    }
+    .beam.active .beam-bar-wrap {
+      border-color: var(--accent);
+      box-shadow: 0 0 14px var(--glow);
+    }
+    .beam.active .beam-bar-fill {
+      height: 100%;
+    }
+    .beam-label {
+      font-size: .68rem; font-weight: 600; color: var(--text-dim);
+      text-align: center; line-height: 1.15;
+      transition: color .15s;
+    }
+    .beam.active .beam-label { color: #fff; }
+    .beam-note {
+      font-family: var(--mono); font-size: .72rem; font-weight: 600;
+      min-height: 18px;
+      color: transparent;
+      transition: color .15s;
+    }
+    .beam.active .beam-note { color: var(--warn); }
+
+    /* Beam colors */
+    .beam[data-beam="0"] .beam-bar-fill { background: linear-gradient(0deg, #f472b6, #ec4899); }
+    .beam[data-beam="1"] .beam-bar-fill { background: linear-gradient(0deg, #fb923c, #f97316); }
+    .beam[data-beam="2"] .beam-bar-fill { background: linear-gradient(0deg, #facc15, #eab308); }
+    .beam[data-beam="3"] .beam-bar-fill { background: linear-gradient(0deg, #4ade80, #22c55e); }
+    .beam[data-beam="4"] .beam-bar-fill { background: linear-gradient(0deg, #38bdf8, #0ea5e9); }
+    .beam[data-beam="5"] .beam-bar-fill { background: linear-gradient(0deg, #818cf8, #6366f1); }
+    .beam[data-beam="6"] .beam-bar-fill { background: linear-gradient(0deg, #c084fc, #a855f7); }
+
+    /* ── Latest Note ───────────────────────────────────── */
+    .latest-note {
+      font-family: var(--mono);
+      font-size: 2.8rem; font-weight: 800;
+      color: var(--warn);
+      text-align: center;
+      min-height: 58px;
+      display: grid; place-items: center;
+      text-shadow: 0 0 24px rgba(251,191,36,.3);
+    }
+    .latest-note.pop { animation: note-pop .35s ease; }
+    @keyframes note-pop {
+      0%   { transform: scale(1); }
+      40%  { transform: scale(1.2); }
+      100% { transform: scale(1); }
+    }
+
+    /* ── Note History ──────────────────────────────────── */
+    .history-list { list-style: none; max-height: 260px; overflow-y: auto; }
+    .history-list::-webkit-scrollbar { width: 4px; }
+    .history-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .history-item {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      font-size: .8rem;
+      animation: slide-in .25s ease;
+    }
+    .history-item:last-child { border-bottom: none; }
+    @keyframes slide-in { from { opacity: 0; transform: translateX(-8px); } to { opacity: 1; transform: translateX(0); } }
+    .history-time { font-family: var(--mono); font-size: .7rem; color: var(--text-dim); min-width: 62px; }
+    .history-instr { color: var(--accent); font-weight: 500; }
+    .history-arrow { color: var(--text-dim); }
+    .history-note { font-family: var(--mono); color: var(--warn); font-weight: 600; }
+    .history-beam-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      flex-shrink: 0;
+    }
+
+    /* ── Serial Log ────────────────────────────────────── */
+    .serial-log {
+      font-family: var(--mono);
+      font-size: .72rem;
+      line-height: 1.6;
+      color: var(--text-dim);
+      max-height: 260px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      padding: 4px 0;
+    }
+    .serial-log::-webkit-scrollbar { width: 4px; }
+    .serial-log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .serial-log .log-line { padding: 1px 0; }
+    .serial-log .log-line.instrument-line { color: var(--accent); font-weight: 500; }
+    .serial-log .log-line.note-line { color: var(--success); }
+    .serial-log .log-line.autoplay-line { color: var(--accent2); }
+    .serial-log .log-line.separator-line { color: var(--border); }
+
+    /* ── Auto-play banner ──────────────────────────────── */
+    .autoplay-banner {
+      display: none; align-items: center; gap: 10px;
+      padding: 10px 16px; margin-bottom: 16px;
+      background: rgba(129,140,248,.08);
+      border: 1px solid rgba(129,140,248,.25);
+      border-radius: var(--radius);
+      font-size: .82rem; color: var(--accent2);
+    }
+    .autoplay-banner.visible { display: flex; }
+    .autoplay-banner .icon { font-size: 1.2rem; }
+    .autoplay-banner .song-name { font-weight: 700; }
+
+    /* ── Send Command ──────────────────────────────────── */
+    .send-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding-top: 12px; border-top: 1px solid var(--border);
+      margin-top: 10px;
+    }
+    .send-bar input {
+      flex: 1; font-family: var(--mono); font-size: .78rem;
+      padding: 7px 12px; border-radius: 6px;
+      background: var(--surface2); border: 1px solid var(--border);
+      color: var(--text); outline: none;
+      transition: border-color .2s;
+    }
+    .send-bar input:focus { border-color: var(--accent); }
+    .send-bar input::placeholder { color: var(--text-dim); }
+
+    /* ── Splash / Welcome State ────────────────────────── */
+    .welcome {
+      text-align: center; padding: 60px 20px;
+    }
+    .welcome-icon {
+      font-size: 4rem; margin-bottom: 16px;
+      filter: drop-shadow(0 0 30px var(--glow));
+    }
+    .welcome h2 {
+      font-size: 1.4rem; font-weight: 700; margin-bottom: 8px;
+    }
+    .welcome p {
+      font-size: .88rem; color: var(--text-dim); max-width: 440px; margin: 0 auto 24px;
+      line-height: 1.6;
+    }
+    .welcome .note {
+      font-size: .72rem; color: var(--text-dim); margin-top: 16px;
+      background: var(--surface2); display: inline-block;
+      padding: 6px 14px; border-radius: 6px;
+    }
+
+    /* ── Stats row ─────────────────────────────────────── */
+    .stats-row {
+      display: flex; gap: 16px; margin-bottom: 16px;
+    }
+    .stat-card {
+      flex: 1;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      text-align: center;
+    }
+    .stat-value {
+      font-size: 1.6rem; font-weight: 800;
+      font-family: var(--mono);
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .stat-label {
+      font-size: .68rem; color: var(--text-dim); text-transform: uppercase;
+      letter-spacing: .04em; margin-top: 2px;
+    }
+
+    /* ── Responsive ────────────────────────────────────── */
+    @media (max-width: 700px) {
+      .grid-top, .grid-bottom { grid-template-columns: 1fr; }
+      .stats-row { flex-wrap: wrap; }
+      .stat-card { min-width: 45%; }
+      .beams-container { gap: 6px; }
+      .beam-bar-wrap { width: 26px; height: 90px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <!-- ─── Header ──────────────────────────────────── -->
+    <header class="header">
+      <div class="header-logo">🎵</div>
+      <div class="header-text">
+        <h1>Laser Harp — Live Monitor</h1>
+        <p>Real-time ESP32 serial visualizer</p>
+      </div>
+      <div class="header-actions">
+        <span id="statusBadge" class="status-badge">
+          <span class="dot"></span>
+          <span id="statusText">Disconnected</span>
+        </span>
+        <button id="btnConnect" class="btn btn-primary" onclick="toggleConnection()">
+          ⚡ Connect
+        </button>
+        <button id="btnDisconnect" class="btn btn-danger" style="display:none" onclick="toggleConnection()">
+          ✕ Disconnect
+        </button>
+      </div>
+    </header>
+
+    <!-- ─── Welcome (shown when disconnected) ──────── -->
+    <div id="welcomeSection" class="welcome">
+      <div class="welcome-icon">🎹</div>
+      <h2>Connect Your Laser Harp</h2>
+      <p>
+        Click <strong>⚡ Connect</strong> to open a serial connection to your ESP32.
+        Select the COM port (e.g. <code>COM9</code>) at <strong>115200 baud</strong>.<br />
+        All beam triggers, instrument changes, and note history will appear here in real time.
+      </p>
+      <button class="btn btn-primary" onclick="toggleConnection()">⚡ Connect to ESP32</button>
+      <div class="note">Requires Chrome or Edge with Web Serial API support.</div>
+    </div>
+
+    <!-- ─── Main Dashboard (hidden until connected) ── -->
+    <div id="dashboard" style="display:none">
+
+      <!-- Auto-play banner -->
+      <div id="autoplayBanner" class="autoplay-banner">
+        <span class="icon">🎶</span>
+        <span>Auto-Playing: <span class="song-name" id="autoplaySong">My Heart Will Go On</span></span>
+      </div>
+
+      <!-- Stats -->
+      <div class="stats-row">
+        <div class="stat-card">
+          <div class="stat-value" id="statNotes">0</div>
+          <div class="stat-label">Notes Played</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statBeam">—</div>
+          <div class="stat-label">Last Beam</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statUptime">0:00</div>
+          <div class="stat-label">Session</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="statLines">0</div>
+          <div class="stat-label">Lines Rx</div>
+        </div>
+      </div>
+
+      <!-- Top row: Instrument + Beam Viz -->
+      <div class="grid-top">
+        <!-- Instrument Card -->
+        <div class="card instrument-card">
+          <div class="card-header">
+            <span>🎹 Active Instrument</span>
+          </div>
+          <div class="card-body">
+            <div class="instrument-name" id="instrumentName">— waiting —</div>
+            <div class="instrument-index" id="instrumentIndex"></div>
+            <div class="instrument-desc" id="instrumentDesc"></div>
+          </div>
+        </div>
+
+        <!-- Beams Card -->
+        <div class="card">
+          <div class="card-header">
+            <span>🌈 Beam Visualizer</span>
+            <span id="latestNoteSmall" style="color:var(--warn);font-family:var(--mono)"></span>
+          </div>
+          <div class="card-body">
+            <div class="latest-note" id="latestNote">—</div>
+            <div class="beams-container" id="beamsContainer">
+              <!-- JS fills 7 beams -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom row: History + Serial Log -->
+      <div class="grid-bottom">
+        <!-- History -->
+        <div class="card">
+          <div class="card-header">
+            <span>📜 Note History</span>
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:.68rem" onclick="clearHistory()">Clear</button>
+          </div>
+          <div class="card-body" style="padding:0">
+            <ul class="history-list" id="historyList">
+              <li class="history-item" style="color:var(--text-dim);justify-content:center;font-style:italic">
+                No notes played yet
+              </li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- Serial Log -->
+        <div class="card">
+          <div class="card-header">
+            <span>📟 Serial Log</span>
+            <button class="btn btn-ghost" style="padding:4px 10px;font-size:.68rem" onclick="clearLog()">Clear</button>
+          </div>
+          <div class="card-body" style="padding:8px 14px">
+            <div class="serial-log" id="serialLog"></div>
+            <div class="send-bar">
+              <input type="text" id="sendInput" placeholder="Send command (p = play, s = stop)…"
+                     onkeydown="if(event.key==='Enter')sendCommand()" />
+              <button class="btn btn-ghost" style="padding:6px 12px;font-size:.72rem" onclick="sendCommand()">Send</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /dashboard -->
+  </div>
+
+  <script>
+    /* ═══════════════════════════════════════════════════
+       State
+       ═══════════════════════════════════════════════════ */
+    let port = null;
+    let reader = null;
+    let writer = null;
+    let readableStreamClosed = null;
+    let writableStreamClosed = null;
+    let connected = false;
+    let sessionStart = null;
+    let uptimeInterval = null;
+    let totalNotes = 0;
+    let totalLines = 0;
+    let lineBuf = '';
+
+    const BEAM_COLORS = [
+      '#ec4899', '#f97316', '#eab308', '#22c55e',
+      '#0ea5e9', '#6366f1', '#a855f7'
+    ];
+    const NOTE_NAMES = ['C4', 'D4', 'E4', 'F4', 'G4', 'A4', 'B4'];
+    const INSTRUMENTS_INFO = {
+      'Grand Piano':     'Natural acoustic grand piano with warm decay',
+      'Acoustic Guitar': 'Studio acoustic steel-string fingerstyle guitar',
+      'Electric Guitar': 'Studio clean electric guitar with crisp pick attack',
+      'Harmonium':       'Real Indian hand-pumped reed organ with warm acoustic chorus',
+      'Saxophone':       'Real studio brass saxophone with full breath and body',
+      'Violin':          'Real studio bowed orchestral violin with natural acoustic vibrato',
+    };
+
+    const INSTRUMENT_RE = />>> ACTIVE INSTRUMENT \[(\d+)\/(\d+)\]: (.+?) <<</;
+    const NOTE_RE       = /^\[(.+?)\] Beam (\d+) BLOCKED -> playing (.+)$/;
+    const AUTOPLAY_NOTE = /^\[(.+?)\] Note (.+)$/;
+    const AUTOPLAY_START = />>> STARTING AUTO-PLAY.*\[(.+?)\] <<</;
+    const AUTOPLAY_STOP  = />>> AUTO-PLAY STOPPED/;
+    const SONG_FINISHED  = />>> '.+?' finished!/;
+    const SEPARATOR_RE   = /^=+$/;
+
+    /* ═══════════════════════════════════════════════════
+       Init Beams UI
+       ═══════════════════════════════════════════════════ */
+    (function initBeams() {
+      const c = document.getElementById('beamsContainer');
+      for (let i = 0; i < 7; i++) {
+        const b = document.createElement('div');
+        b.className = 'beam';
+        b.dataset.beam = i;
+        b.id = `beam${i}`;
+        b.innerHTML = `
+          <div class="beam-note" id="beamNote${i}">${NOTE_NAMES[i]}</div>
+          <div class="beam-bar-wrap"><div class="beam-bar-fill"></div></div>
+          <div class="beam-label">Beam ${i}<br/>${NOTE_NAMES[i]}</div>
+        `;
+        c.appendChild(b);
+      }
+    })();
+
+    /* ═══════════════════════════════════════════════════
+       Connection
+       ═══════════════════════════════════════════════════ */
+    async function toggleConnection() {
+      if (connected) {
+        await disconnect();
+      } else {
+        await connect();
+      }
+    }
+
+    async function connect() {
+      if (!('serial' in navigator)) {
+        alert('Web Serial API is not supported in this browser.\nPlease use Chrome or Edge (version 89+).');
+        return;
+      }
+      try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+
+        connected = true;
+        sessionStart = Date.now();
+        totalNotes = 0;
+        totalLines = 0;
+        updateUI();
+        startUptime();
+
+        // Writer for sending commands
+        const textEncoder = new TextEncoderStream();
+        writableStreamClosed = textEncoder.readable.pipeTo(port.writable);
+        writer = textEncoder.writable.getWriter();
+
+        // Reader
+        const textDecoder = new TextDecoderStream();
+        readableStreamClosed = port.readable.pipeTo(textDecoder.writable);
+        reader = textDecoder.readable.getReader();
+
+        readLoop();
+      } catch (err) {
+        if (err.name !== 'NotFoundError') {
+          console.error(err);
+          alert('Connection failed: ' + err.message);
+        }
+      }
+    }
+
+    async function disconnect() {
+      connected = false;
+      try {
+        if (reader) { await reader.cancel(); reader = null; }
+        if (readableStreamClosed) { await readableStreamClosed.catch(() => {}); }
+        if (writer) { await writer.close(); writer = null; }
+        if (writableStreamClosed) { await writableStreamClosed.catch(() => {}); }
+        if (port) { await port.close(); port = null; }
+      } catch (e) { console.warn('Disconnect:', e); }
+      clearInterval(uptimeInterval);
+      updateUI();
+    }
+
+    async function readLoop() {
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          if (value) {
+            lineBuf += value;
+            const lines = lineBuf.split('\n');
+            lineBuf = lines.pop(); // keep incomplete tail
+            for (const raw of lines) {
+              processLine(raw.replace(/\r$/, ''));
+            }
+          }
+        }
+      } catch (e) {
+        if (connected) console.error('Read error:', e);
+      }
+      if (connected) disconnect();
+    }
+
+    async function sendCommand() {
+      const input = document.getElementById('sendInput');
+      const cmd = input.value.trim();
+      if (!cmd || !writer) return;
+      try {
+        await writer.write(cmd + '\n');
+        input.value = '';
+        appendLog(`> ${cmd}`, 'autoplay-line');
+      } catch (e) {
+        console.error('Send error:', e);
+      }
+    }
+
+    /* ═══════════════════════════════════════════════════
+       Line Processing
+       ═══════════════════════════════════════════════════ */
+    function processLine(line) {
+      if (!line.trim()) return;
+      totalLines++;
+      document.getElementById('statLines').textContent = totalLines;
+
+      let m;
+
+      // --- Instrument change ---
+      m = INSTRUMENT_RE.exec(line);
+      if (m) {
+        setInstrument(m[3], parseInt(m[1]), parseInt(m[2]));
+        appendLog(line, 'instrument-line');
+        return;
+      }
+
+      // --- Note triggered by beam ---
+      m = NOTE_RE.exec(line);
+      if (m) {
+        const instr = m[1];
+        const beam = parseInt(m[2]);
+        const note = m[3];
+        triggerBeam(beam, note, instr);
+        appendLog(line, 'note-line');
+        return;
+      }
+
+      // --- Auto-play note ---
+      m = AUTOPLAY_NOTE.exec(line);
+      if (m) {
+        const instr = m[1];
+        const note = m[2];
+        // find beam index from note name
+        const beamIdx = NOTE_NAMES.indexOf(note) >= 0 ? NOTE_NAMES.indexOf(note) : findBeamByNote(note);
+        if (beamIdx >= 0) {
+          triggerBeam(beamIdx, note, instr);
+        } else {
+          triggerBeam(-1, note, instr);
+        }
+        appendLog(line, 'note-line');
+        return;
+      }
+
+      // --- Auto-play start ---
+      m = AUTOPLAY_START.exec(line);
+      if (m) {
+        showAutoplay(true);
+        appendLog(line, 'autoplay-line');
+        return;
+      }
+
+      // --- Auto-play stop / finished ---
+      if (AUTOPLAY_STOP.test(line) || SONG_FINISHED.test(line)) {
+        showAutoplay(false);
+        appendLog(line, 'autoplay-line');
+        return;
+      }
+
+      // --- Separator lines ---
+      if (SEPARATOR_RE.test(line.trim())) {
+        appendLog(line, 'separator-line');
+        return;
+      }
+
+      // --- Everything else ---
+      appendLog(line, '');
+    }
+
+    function findBeamByNote(noteName) {
+      // Handle note names like "C4 (Middle C)"
+      for (let i = 0; i < NOTE_NAMES.length; i++) {
+        if (noteName.startsWith(NOTE_NAMES[i])) return i;
+      }
+      return -1;
+    }
+
+    /* ═══════════════════════════════════════════════════
+       UI Updates
+       ═══════════════════════════════════════════════════ */
+    function updateUI() {
+      const badge = document.getElementById('statusBadge');
+      const text = document.getElementById('statusText');
+      const btnC = document.getElementById('btnConnect');
+      const btnD = document.getElementById('btnDisconnect');
+      const welcome = document.getElementById('welcomeSection');
+      const dash = document.getElementById('dashboard');
+
+      if (connected) {
+        badge.classList.add('connected');
+        text.textContent = 'Connected';
+        btnC.style.display = 'none';
+        btnD.style.display = '';
+        welcome.style.display = 'none';
+        dash.style.display = '';
+      } else {
+        badge.classList.remove('connected');
+        text.textContent = 'Disconnected';
+        btnC.style.display = '';
+        btnD.style.display = 'none';
+        welcome.style.display = '';
+        dash.style.display = 'none';
+      }
+    }
+
+    function setInstrument(name, idx, total) {
+      const el = document.getElementById('instrumentName');
+      el.textContent = name;
+      el.classList.remove('flash');
+      void el.offsetWidth; // force reflow
+      el.classList.add('flash');
+
+      document.getElementById('instrumentIndex').textContent = `${idx} / ${total}`;
+      document.getElementById('instrumentDesc').textContent = INSTRUMENTS_INFO[name] || '';
+    }
+
+    let beamTimeout = null;
+    function triggerBeam(beamIdx, noteName, instrName) {
+      totalNotes++;
+      document.getElementById('statNotes').textContent = totalNotes;
+
+      // Latest note display
+      const latest = document.getElementById('latestNote');
+      latest.textContent = noteName;
+      latest.classList.remove('pop');
+      void latest.offsetWidth;
+      latest.classList.add('pop');
+      document.getElementById('latestNoteSmall').textContent = noteName;
+
+      // Stat
+      document.getElementById('statBeam').textContent = beamIdx >= 0 ? beamIdx : '—';
+
+      // Beam bars
+      if (beamIdx >= 0 && beamIdx < 7) {
+        // Deactivate all
+        for (let i = 0; i < 7; i++) {
+          document.getElementById(`beam${i}`).classList.remove('active');
+        }
+        document.getElementById(`beam${beamIdx}`).classList.add('active');
+        document.getElementById(`beamNote${beamIdx}`).textContent = noteName;
+
+        clearTimeout(beamTimeout);
+        beamTimeout = setTimeout(() => {
+          for (let i = 0; i < 7; i++) {
+            document.getElementById(`beam${i}`).classList.remove('active');
+          }
+        }, 800);
+      }
+
+      // Update instrument display if needed
+      setInstrument(instrName,
+        document.getElementById('instrumentIndex').textContent.split('/')[0]?.trim() || '?',
+        document.getElementById('instrumentIndex').textContent.split('/')[1]?.trim() || '?');
+
+      // History
+      addHistory(noteName, instrName, beamIdx);
+    }
+
+    function addHistory(note, instr, beamIdx) {
+      const list = document.getElementById('historyList');
+      // Remove placeholder
+      if (list.children.length === 1 && list.children[0].style.fontStyle === 'italic') {
+        list.innerHTML = '';
+      }
+
+      const now = new Date();
+      const ts = now.toTimeString().slice(0, 8);
+
+      const li = document.createElement('li');
+      li.className = 'history-item';
+
+      const color = beamIdx >= 0 && beamIdx < 7 ? BEAM_COLORS[beamIdx] : 'var(--text-dim)';
+      li.innerHTML = `
+        <span class="history-beam-dot" style="background:${color}"></span>
+        <span class="history-time">${ts}</span>
+        <span class="history-instr">${instr}</span>
+        <span class="history-arrow">→</span>
+        <span class="history-note">${note}</span>
+      `;
+
+      list.prepend(li);
+
+      // Cap at 50
+      while (list.children.length > 50) {
+        list.removeChild(list.lastChild);
+      }
+    }
+
+    function clearHistory() {
+      document.getElementById('historyList').innerHTML = `
+        <li class="history-item" style="color:var(--text-dim);justify-content:center;font-style:italic">
+          No notes played yet
+        </li>`;
+    }
+
+    /* ── Serial Log ───────────────────── */
+    const MAX_LOG_LINES = 300;
+    let logCount = 0;
+
+    function appendLog(text, cls) {
+      const log = document.getElementById('serialLog');
+      const div = document.createElement('div');
+      div.className = `log-line ${cls}`;
+      div.textContent = text;
+      log.appendChild(div);
+      logCount++;
+
+      // Trim old lines
+      while (logCount > MAX_LOG_LINES) {
+        log.removeChild(log.firstChild);
+        logCount--;
+      }
+
+      // Auto-scroll
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function clearLog() {
+      document.getElementById('serialLog').innerHTML = '';
+      logCount = 0;
+    }
+
+    /* ── Auto-play banner ────────────── */
+    function showAutoplay(visible) {
+      document.getElementById('autoplayBanner').classList.toggle('visible', visible);
+    }
+
+    /* ── Uptime ──────────────────────── */
+    function startUptime() {
+      clearInterval(uptimeInterval);
+      uptimeInterval = setInterval(() => {
+        if (!sessionStart) return;
+        const sec = Math.floor((Date.now() - sessionStart) / 1000);
+        const m = Math.floor(sec / 60);
+        const s = sec % 60;
+        document.getElementById('statUptime').textContent = `${m}:${String(s).padStart(2, '0')}`;
+      }, 1000);
+    }
+  </script>
+</body>
+</html>
